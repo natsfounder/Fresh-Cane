@@ -1,0 +1,298 @@
+-- Migration: 20261010093500_fix_generate_bill_discount_columns.sql
+-- Description: Add alias columns to store_settings for discount limits and
+-- update generate_bill_for_order to prevent runtime column errors and allow
+-- promotional offers to apply without being blocked by manual cashier discretionary caps.
+
+-- 1. Add alias columns on store_settings if not already present
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+          AND table_name = 'store_settings' 
+          AND column_name = 'max_cashier_discount_flat'
+    ) THEN
+        ALTER TABLE public.store_settings 
+        ADD COLUMN max_cashier_discount_flat NUMERIC(10,2) 
+        GENERATED ALWAYS AS (max_cashier_discount_amount) STORED;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+          AND table_name = 'store_settings' 
+          AND column_name = 'max_cashier_discount_percent'
+    ) THEN
+        ALTER TABLE public.store_settings 
+        ADD COLUMN max_cashier_discount_percent NUMERIC(5,2) 
+        GENERATED ALWAYS AS (max_cashier_discount_percentage) STORED;
+    END IF;
+END $$;
+
+-- 2. Update generate_bill_for_order with robust discount column handling and offer allowance
+CREATE OR REPLACE FUNCTION public.generate_bill_for_order(
+    p_order_id UUID,
+    p_discount_type VARCHAR(20) DEFAULT NULL,
+    p_discount_value NUMERIC(10,2) DEFAULT 0,
+    p_discount_reason VARCHAR(150) DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+    v_actor UUID := auth.uid();
+    v_role VARCHAR(20);
+    v_assigned_roles TEXT[];
+    v_order RECORD;
+    v_settings RECORD;
+    v_other_order_ids UUID[];
+    v_subtotal NUMERIC(10,2);
+    v_discount_amount NUMERIC(10,2) := 0;
+    v_discount_rate NUMERIC(5,2) := 0;
+    v_discounted_subtotal NUMERIC(10,2);
+    v_tax_amount NUMERIC(10,2) := 0;
+    v_raw_total NUMERIC(10,2);
+    v_final_amount NUMERIC(10,2);
+    v_round_off NUMERIC(10,2);
+    v_bill_number VARCHAR(50);
+    v_bill_id UUID;
+    v_business_date DATE;
+    v_existing_bill RECORD;
+    v_cust_status VARCHAR(20);
+    v_cust_label VARCHAR(100);
+    v_is_promo_offer BOOLEAN := false;
+    v_max_pct NUMERIC(5,2);
+    v_max_flat NUMERIC(10,2);
+BEGIN
+    -- 1. Authorization: cashier or super_admin (including assigned_roles)
+    SELECT role, assigned_roles INTO v_role, v_assigned_roles
+    FROM public.user_profiles 
+    WHERE id = v_actor AND is_active = true;
+
+    IF v_role IS NULL OR (
+        v_role NOT IN ('cashier', 'super_admin') 
+        AND NOT ('cashier' = ANY(v_assigned_roles) OR 'super_admin' = ANY(v_assigned_roles))
+    ) THEN
+        RAISE EXCEPTION 'Unauthorized: only cashier or super_admin can generate bills';
+    END IF;
+
+    -- 2. Lock parent order
+    SELECT * INTO v_order FROM public.orders WHERE id = p_order_id FOR UPDATE;
+    IF v_order IS NULL THEN
+        RAISE EXCEPTION 'Order not found';
+    END IF;
+
+    -- 3. Verify order is not in terminal state
+    IF v_order.status IN ('completed', 'cancelled') THEN
+        RAISE EXCEPTION 'Order cannot be billed because it is %', v_order.status;
+    END IF;
+
+    -- 3.1 Guard: If order belongs to a table session customer, verify customer has finished dining
+    IF v_order.session_customer_id IS NOT NULL THEN
+        SELECT status, customer_label INTO v_cust_status, v_cust_label
+        FROM public.table_session_customers
+        WHERE id = v_order.session_customer_id;
+
+        IF v_cust_status IS NOT NULL AND v_cust_status = 'active' THEN
+            RAISE EXCEPTION 'Cannot generate bill: Customer % is still dining. The server must mark this customer as finished before billing.', COALESCE(v_cust_label, 'order');
+        END IF;
+    END IF;
+
+    -- 4. Check if bill already exists (idempotent return)
+    SELECT id, bill_number, subtotal_amount, discount_amount, tax_amount, round_off_amount, final_amount
+    INTO v_existing_bill
+    FROM public.bills 
+    WHERE order_id = p_order_id 
+    LIMIT 1;
+
+    IF v_existing_bill.id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'bill_id', v_existing_bill.id,
+            'bill_number', v_existing_bill.bill_number,
+            'subtotal', v_existing_bill.subtotal_amount,
+            'discount_amount', v_existing_bill.discount_amount,
+            'tax_amount', v_existing_bill.tax_amount,
+            'round_off', v_existing_bill.round_off_amount,
+            'final_amount', v_existing_bill.final_amount,
+            'already_exists', true
+        );
+    END IF;
+
+    -- 5. Consolidate any other active unbilled orders for this customer (or table session)
+    SELECT array_agg(id) INTO v_other_order_ids
+    FROM public.orders
+    WHERE id <> p_order_id
+      AND status IN ('open', 'served')
+      AND (
+          (v_order.session_customer_id IS NOT NULL AND session_customer_id = v_order.session_customer_id)
+          OR (v_order.session_customer_id IS NULL AND v_order.session_id IS NOT NULL AND session_id = v_order.session_id)
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM public.bills b WHERE b.order_id = orders.id
+      );
+
+    IF v_other_order_ids IS NOT NULL AND array_length(v_other_order_ids, 1) > 0 THEN
+        -- Reassign all active order items from secondary orders to the primary bill order
+        UPDATE public.order_items
+        SET order_id = p_order_id
+        WHERE order_id = ANY(v_other_order_ids)
+          AND status <> 'cancelled';
+
+        -- Mark secondary orders as completed (consolidated) so they are not left pending
+        UPDATE public.orders
+        SET status = 'completed',
+            notes = COALESCE(notes || E'\n', '') || 'Items consolidated into Bill for Order ' || v_order.order_number,
+            subtotal = 0,
+            updated_at = now()
+        WHERE id = ANY(v_other_order_ids);
+
+        -- Update primary order subtotal
+        UPDATE public.orders
+        SET subtotal = (
+            SELECT COALESCE(SUM(item_total), 0)
+            FROM public.order_items
+            WHERE order_id = p_order_id AND status <> 'cancelled'
+        ),
+        updated_at = now()
+        WHERE id = p_order_id;
+    END IF;
+
+    -- 6. Verify at least one non-cancelled item
+    IF NOT EXISTS (SELECT 1 FROM public.order_items WHERE order_id = p_order_id AND status <> 'cancelled') THEN
+        RAISE EXCEPTION 'Order has no active items to bill';
+    END IF;
+
+    -- 7. Lock and read store settings
+    SELECT * INTO v_settings FROM public.store_settings LIMIT 1 FOR SHARE;
+    IF v_settings IS NULL THEN
+        RAISE EXCEPTION 'Store settings not found';
+    END IF;
+
+    -- 8. Calculate unified subtotal from active items
+    SELECT COALESCE(SUM(unit_price_snapshot * quantity), 0) INTO v_subtotal
+    FROM public.order_items
+    WHERE order_id = p_order_id AND status <> 'cancelled';
+
+    -- 9. Discounts calculation
+    IF p_discount_value < 0 THEN
+        RAISE EXCEPTION 'Discount value cannot be negative';
+    END IF;
+
+    IF p_discount_value > 0 THEN
+        IF p_discount_type IS NULL OR p_discount_type NOT IN ('percentage', 'flat') THEN
+            RAISE EXCEPTION 'Invalid discount type. Must be percentage or flat';
+        END IF;
+
+        IF p_discount_reason IS NULL OR LENGTH(TRIM(p_discount_reason)) < 3 THEN
+            RAISE EXCEPTION 'Discount reason must be at least 3 characters';
+        END IF;
+
+        -- Check if reason indicates an authorized store offer/promotion
+        IF p_discount_reason ILIKE 'Offer:%' OR p_discount_reason ILIKE 'Promo%' THEN
+            v_is_promo_offer := true;
+        END IF;
+
+        v_max_pct := COALESCE(v_settings.max_cashier_discount_percentage, 10.00);
+        v_max_flat := COALESCE(v_settings.max_cashier_discount_amount, 100.00);
+
+        IF p_discount_type = 'percentage' THEN
+            IF p_discount_value > 100 THEN
+                RAISE EXCEPTION 'Percentage discount cannot exceed 100 percent';
+            END IF;
+            IF NOT v_is_promo_offer AND v_role = 'cashier' AND p_discount_value > v_max_pct THEN
+                RAISE EXCEPTION 'Cashier discount limit exceeded. Maximum: % percent', v_max_pct;
+            END IF;
+            v_discount_rate := p_discount_value;
+            v_discount_amount := ROUND((v_subtotal * v_discount_rate / 100.0), 2);
+        ELSE
+            IF p_discount_value > v_subtotal THEN
+                RAISE EXCEPTION 'Flat discount cannot exceed subtotal (%)', v_subtotal;
+            END IF;
+            IF NOT v_is_promo_offer AND v_role = 'cashier' AND p_discount_value > v_max_flat THEN
+                RAISE EXCEPTION 'Cashier flat discount limit exceeded. Maximum: %', v_max_flat;
+            END IF;
+            v_discount_amount := ROUND(p_discount_value, 2);
+            IF v_subtotal > 0 THEN
+                v_discount_rate := ROUND((v_discount_amount / v_subtotal * 100.0), 2);
+            END IF;
+        END IF;
+    END IF;
+
+    v_discounted_subtotal := v_subtotal - v_discount_amount;
+
+    -- 10. Taxes calculation
+    IF v_settings.tax_rate_percentage > 0 THEN
+        IF v_settings.is_tax_inclusive THEN
+            v_tax_amount := ROUND((v_discounted_subtotal - (v_discounted_subtotal / (1 + v_settings.tax_rate_percentage / 100.0))), 2);
+            v_raw_total := v_discounted_subtotal;
+        ELSE
+            v_tax_amount := ROUND((v_discounted_subtotal * v_settings.tax_rate_percentage / 100.0), 2);
+            v_raw_total := v_discounted_subtotal + v_tax_amount;
+        END IF;
+    ELSE
+        v_tax_amount := 0;
+        v_raw_total := v_discounted_subtotal;
+    END IF;
+
+    -- 11. Rounding: nearest integer rupee
+    v_final_amount := ROUND(v_raw_total, 0);
+    v_round_off := v_final_amount - v_raw_total;
+
+    -- 12. Business date (Asia/Kolkata)
+    v_business_date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+
+    -- 13. Allocate bill number atomically
+    v_bill_number := public.get_next_bill_number(v_settings.bill_prefix);
+
+    -- 14. Create bill
+    INSERT INTO public.bills (
+        id, bill_number, order_id, cashier_id, business_date,
+        subtotal_amount, discount_type, discount_rate, discount_amount, discount_reason,
+        tax_rate_snapshot, is_tax_inclusive_snapshot, tax_amount,
+        round_off_amount, final_amount,
+        store_name_snapshot, store_address_snapshot, store_gstin_snapshot,
+        customer_name_snapshot, customer_phone_snapshot,
+        status
+    )
+    VALUES (
+        gen_random_uuid(), v_bill_number, p_order_id, v_actor, v_business_date,
+        v_subtotal, p_discount_type, v_discount_rate, v_discount_amount, p_discount_reason,
+        v_settings.tax_rate_percentage, v_settings.is_tax_inclusive, v_tax_amount,
+        v_round_off, v_final_amount,
+        v_settings.store_name, v_settings.address, v_settings.gstin,
+        v_order.customer_name, v_order.customer_phone,
+        'unpaid'
+    )
+    RETURNING id INTO v_bill_id;
+
+    -- 15. Audit: BILL_GENERATED
+    INSERT INTO public.audit_logs (user_id, action, entity_type, entity_id, new_data)
+    VALUES (v_actor, 'BILL_GENERATED', 'bill', v_bill_id::text,
+        jsonb_build_object('bill_number', v_bill_number, 'order_id', p_order_id,
+            'subtotal', v_subtotal, 'tax_amount', v_tax_amount, 'final_amount', v_final_amount));
+
+    IF v_discount_amount > 0 THEN
+        INSERT INTO public.audit_logs (user_id, action, entity_type, entity_id, new_data)
+        VALUES (v_actor, 'DISCOUNT_APPLIED', 'bill', v_bill_id::text,
+            jsonb_build_object('discount_type', p_discount_type, 'discount_rate', v_discount_rate,
+                'discount_amount', v_discount_amount, 'discount_reason', p_discount_reason));
+    END IF;
+
+    RETURN jsonb_build_object(
+        'bill_id', v_bill_id,
+        'bill_number', v_bill_number,
+        'subtotal', v_subtotal,
+        'discount_amount', v_discount_amount,
+        'tax_amount', v_tax_amount,
+        'round_off', v_round_off,
+        'final_amount', v_final_amount,
+        'already_exists', false
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.generate_bill_for_order(UUID, VARCHAR, NUMERIC, VARCHAR) FROM anon, PUBLIC;
+GRANT EXECUTE ON FUNCTION public.generate_bill_for_order(UUID, VARCHAR, NUMERIC, VARCHAR) TO authenticated;

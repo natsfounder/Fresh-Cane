@@ -56,3 +56,8 @@ supabase/.temp/
 # Symbolication & obfuscation
 app.*.symbols
 app.*.map.json
+
+# Local scratch and test captures
+scratch/
+video/
+phone_screen_*.png
