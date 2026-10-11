@@ -9,6 +9,7 @@ class SupabaseService {
   /// Initialize Supabase Flutter SDK with client-safe configuration.
   static Future<void> initialize() async {
     try {
+      AppConfig.validate();
       // ignore: deprecated_member_use
       await Supabase.initialize(
         url: AppConfig.supabaseUrl,

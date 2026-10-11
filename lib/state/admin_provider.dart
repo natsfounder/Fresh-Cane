@@ -1055,6 +1055,7 @@ class AdminNotifier extends Notifier<AdminState> {
               'Subcategory Total': 'INR ${subActiveTotal.toStringAsFixed(2)}',
               'Active Count': '$subActiveCount',
               'Deleted Total': 'INR ${subDeletedTotal.toStringAsFixed(2)}',
+              'Deleted Count': '$subDeletedCount',
             }
           : (summary != null
               ? {
