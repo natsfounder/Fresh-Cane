@@ -16,20 +16,22 @@ class AppConfig {
   static const String _stagingSupabaseAnonKey =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndmbGhibHBkc3pvZnJzb2JqcXFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzMwMzcsImV4cCI6MjEwNDc0OTAzN30.DVe5fJgE8TWoR2_M9ZpcOgVGdI1EbhI7TVwOzbYnzkg';
 
+  /// Production project reference constant (nnakfnqgdhiblcolbphr).
+  static const String _productionSupabaseUrl =
+      'https://nnakfnqgdhiblcolbphr.supabase.co';
+  static const String _productionSupabaseAnonKey =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5uYWtmbnFnZGhpYmxjb2xicGhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE2MzgxMjUsImV4cCI6MjEwNzIxNDEyNX0.Swak3hI6U9thrJdLreg-33BBFEKPz3HHsBfMdxNqyXo';
+
   /// Raw ENVIRONMENT passed via compile-time definition.
   static const String _rawEnvironment = String.fromEnvironment('ENVIRONMENT');
 
   /// Active Environment: 'staging' or 'production'.
-  /// In debug mode, defaults to 'staging' for developer convenience.
-  /// In release mode, requires an explicit --dart-define=ENVIRONMENT=staging or production.
+  /// Defaults to 'staging' on the Staging branch.
   static String get environment {
     if (_rawEnvironment.isNotEmpty) {
       return _rawEnvironment.toLowerCase().trim();
     }
-    if (kDebugMode) {
-      return 'staging';
-    }
-    return '';
+    return 'staging';
   }
 
   /// Whether the current build is targeting production.
@@ -51,21 +53,19 @@ class AppConfig {
   );
 
   /// Resolved Supabase URL.
-  /// In production, requires explicit --dart-define=SUPABASE_URL=...
-  /// In staging, falls back to the configured staging project URL if omitted.
   static String get supabaseUrl {
     if (isProduction) {
-      return _rawSupabaseUrl;
+      return _rawSupabaseUrl.isNotEmpty ? _rawSupabaseUrl : _productionSupabaseUrl;
     }
     return _rawSupabaseUrl.isNotEmpty ? _rawSupabaseUrl : _stagingSupabaseUrl;
   }
 
   /// Resolved Supabase Anon Key.
-  /// In production, requires explicit --dart-define=SUPABASE_ANON_KEY=...
-  /// In staging, falls back to the configured staging anon key if omitted.
   static String get supabaseAnonKey {
     if (isProduction) {
-      return _rawSupabaseAnonKey;
+      return _rawSupabaseAnonKey.isNotEmpty
+          ? _rawSupabaseAnonKey
+          : _productionSupabaseAnonKey;
     }
     return _rawSupabaseAnonKey.isNotEmpty
         ? _rawSupabaseAnonKey
@@ -111,7 +111,10 @@ class AppConfig {
 
     // 3. Production validation
     if (env == 'production') {
-      if (rawUrl.isEmpty) {
+      final resolvedUrl = rawUrl.isNotEmpty ? rawUrl : _productionSupabaseUrl;
+      final resolvedKey = rawKey.isNotEmpty ? rawKey : _productionSupabaseAnonKey;
+
+      if (resolvedUrl.isEmpty) {
         throw StateError(
           'PRODUCTION CONFIGURATION ERROR: SUPABASE_URL was not supplied.\n'
           'Production builds require explicit compile-time flags:\n'
@@ -119,18 +122,18 @@ class AppConfig {
           '  --dart-define=SUPABASE_ANON_KEY=<prod-anon-key>',
         );
       }
-      final uri = Uri.tryParse(rawUrl);
+      final uri = Uri.tryParse(resolvedUrl);
       if (uri == null || uri.scheme != 'https' || !uri.hasAuthority || uri.host.isEmpty) {
         throw StateError(
-          'PRODUCTION CONFIGURATION ERROR: SUPABASE_URL must be a valid HTTPS URL (got: "$rawUrl").',
+          'PRODUCTION CONFIGURATION ERROR: SUPABASE_URL must be a valid HTTPS URL (got: "$resolvedUrl").',
         );
       }
-      if (rawUrl.contains('wflhblpdszofrsobjqqq')) {
+      if (resolvedUrl.contains('wflhblpdszofrsobjqqq')) {
         throw StateError(
           'PRODUCTION ISOLATION ERROR: Production build cannot point to the Staging Supabase project URL.',
         );
       }
-      if (rawKey.isEmpty || rawKey.length < 30) {
+      if (resolvedKey.isEmpty || resolvedKey.length < 30) {
         throw StateError(
           'PRODUCTION CONFIGURATION ERROR: SUPABASE_ANON_KEY was missing or malformed.',
         );

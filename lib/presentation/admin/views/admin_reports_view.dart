@@ -204,7 +204,7 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
         : DateFormat('MMMM yyyy').format(sState.selectedMonth);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -213,8 +213,8 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
       child: Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 12,
-        runSpacing: 10,
+        spacing: 8,
+        runSpacing: 8,
         children: [
           // Daily vs Monthly Toggle
           Container(
@@ -237,7 +237,10 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
-                icon: const Icon(Icons.chevron_left_rounded, size: 22),
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.all(4),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                icon: const Icon(Icons.chevron_left_rounded, size: 20),
                 tooltip: isDaily ? 'Previous Day' : 'Previous Month',
                 onPressed: () {
                   if (isDaily) {
@@ -272,26 +275,30 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
                 },
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.grey.shade300),
                   ),
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF2D6A4F)),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
                       Text(
                         currentLabel,
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF1B4332)),
+                        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF1B4332)),
                       ),
                     ],
                   ),
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.chevron_right_rounded, size: 22),
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.all(4),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                icon: const Icon(Icons.chevron_right_rounded, size: 20),
                 tooltip: isDaily ? 'Next Day' : 'Next Month',
                 onPressed: () {
                   if (isDaily) {
@@ -378,23 +385,66 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
           LayoutBuilder(
             builder: (context, constraints) {
               final isWide = constraints.maxWidth > 700;
+              final cashCard = _buildPositionCard(
+                'CASH POSITION',
+                summary.effectiveOpeningCash,
+                summary.salesCash,
+                summary.expensesCash,
+                summary.effectiveClosingCash,
+                const Color(0xFF2E7D32),
+                canSetOpening: summary.canEnterManualOpening,
+                hasManualOpening: summary.hasManualOpening,
+                canSetClosing: summary.canEnterManualClosing,
+                hasManualClosing: summary.hasManualClosing,
+                onTapOpening: () => _showSettlementOverrideDialog('opening', summary),
+                onTapClosing: () => _showSettlementOverrideDialog('closing', summary),
+              );
+              final upiCard = _buildPositionCard(
+                'UPI POSITION',
+                summary.effectiveOpeningUpi,
+                summary.salesUpi,
+                summary.expensesUpi,
+                summary.effectiveClosingUpi,
+                const Color(0xFF1565C0),
+                canSetOpening: summary.canEnterManualOpening,
+                hasManualOpening: summary.hasManualOpening,
+                canSetClosing: summary.canEnterManualClosing,
+                hasManualClosing: summary.hasManualClosing,
+                onTapOpening: () => _showSettlementOverrideDialog('opening', summary),
+                onTapClosing: () => _showSettlementOverrideDialog('closing', summary),
+              );
+              final totalCard = _buildPositionCard(
+                'TOTAL POSITION',
+                summary.effectiveOpeningTotal,
+                summary.salesTotal,
+                summary.expensesTotal,
+                summary.effectiveClosingTotal,
+                const Color(0xFF1B4332),
+                canSetOpening: summary.canEnterManualOpening,
+                hasManualOpening: summary.hasManualOpening,
+                canSetClosing: summary.canEnterManualClosing,
+                hasManualClosing: summary.hasManualClosing,
+                onTapOpening: () => _showSettlementOverrideDialog('opening', summary),
+                onTapClosing: () => _showSettlementOverrideDialog('closing', summary),
+              );
+
               return isWide
                   ? Row(
                       children: [
-                        Expanded(child: _buildPositionCard('CASH POSITION', summary.openingCash, summary.salesCash, summary.expensesCash, summary.closingCash, const Color(0xFF2E7D32))),
+                        Expanded(child: cashCard),
                         const SizedBox(width: 12),
-                        Expanded(child: _buildPositionCard('UPI POSITION', summary.openingUpi, summary.salesUpi, summary.expensesUpi, summary.closingUpi, const Color(0xFF1565C0))),
+                        Expanded(child: upiCard),
                         const SizedBox(width: 12),
-                        Expanded(child: _buildPositionCard('TOTAL POSITION', summary.openingTotal, summary.salesTotal, summary.expensesTotal, summary.closingTotal, const Color(0xFF1B4332))),
+                        Expanded(child: totalCard),
                       ],
                     )
                   : Column(
                       children: [
-                        _buildPositionCard('CASH POSITION', summary.openingCash, summary.salesCash, summary.expensesCash, summary.closingCash, const Color(0xFF2E7D32)),
+                        cashCard,
                         const SizedBox(height: 10),
-                        _buildPositionCard('UPI POSITION', summary.openingUpi, summary.salesUpi, summary.expensesUpi, summary.closingUpi, const Color(0xFF1565C0)),
+                        upiCard,
                         const SizedBox(height: 10),
-                        _buildPositionCard('TOTAL POSITION', summary.openingTotal, summary.salesTotal, summary.expensesTotal, summary.closingTotal, const Color(0xFF1B4332)),
+                        totalCard,
                       ],
                     );
             },
@@ -417,9 +467,12 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
                     children: [
                       const Icon(Icons.history_rounded, size: 18, color: Color(0xFF2D6A4F)),
                       const SizedBox(width: 8),
-                      Text(
-                        'Today\'s Transaction Timeline (${sState.dailyTransactions.length} records)',
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1B4332)),
+                      Flexible(
+                        child: Text(
+                          'Today\'s Transaction Timeline (${sState.dailyTransactions.length} records)',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1B4332)),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),
@@ -520,8 +573,14 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
     double sales,
     double expenses,
     double closing,
-    Color accentColor,
-  ) {
+    Color accentColor, {
+    bool canSetOpening = false,
+    bool hasManualOpening = false,
+    bool canSetClosing = false,
+    bool hasManualClosing = false,
+    VoidCallback? onTapOpening,
+    VoidCallback? onTapClosing,
+  }) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -542,41 +601,442 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                title,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: accentColor, letterSpacing: 0.5),
+              Flexible(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: accentColor,
+                    letterSpacing: 0.5,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+              const SizedBox(width: 4),
               Icon(Icons.account_balance_wallet_outlined, size: 16, color: accentColor),
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            '₹${closing.toStringAsFixed(2)}',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: accentColor),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '₹${closing.toStringAsFixed(2)}',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: accentColor),
+            ),
           ),
           const SizedBox(height: 8),
           const Divider(height: 1),
           const SizedBox(height: 8),
-          _buildFormulaRow('Opening Balance', '₹${opening.toStringAsFixed(2)}', Colors.grey.shade700),
+          _buildFormulaRow(
+            'Opening Balance',
+            '₹${opening.toStringAsFixed(2)}',
+            Colors.grey.shade700,
+            badge: hasManualOpening ? 'MANUAL' : null,
+            actionIcon: canSetOpening
+                ? (hasManualOpening ? Icons.edit_note_rounded : Icons.add_circle_outline_rounded)
+                : null,
+            actionTooltip: canSetOpening
+                ? (hasManualOpening ? 'Edit Manual Opening Float' : 'Set Manual Opening Float')
+                : null,
+            onAction: canSetOpening ? onTapOpening : null,
+          ),
           _buildFormulaRow('+ Sales', '+₹${sales.toStringAsFixed(2)}', const Color(0xFF2E7D32)),
           _buildFormulaRow('− Expenses', '−₹${expenses.toStringAsFixed(2)}', const Color(0xFFC62828)),
           const SizedBox(height: 4),
-          _buildFormulaRow('= Closing Balance', '₹${closing.toStringAsFixed(2)}', accentColor, isBold: true),
+          _buildFormulaRow(
+            '= Closing Balance',
+            '₹${closing.toStringAsFixed(2)}',
+            accentColor,
+            isBold: true,
+            badge: hasManualClosing ? 'MANUAL' : null,
+            actionIcon: canSetClosing
+                ? (hasManualClosing ? Icons.edit_note_rounded : Icons.add_circle_outline_rounded)
+                : null,
+            actionTooltip: canSetClosing
+                ? (hasManualClosing ? 'Edit Manual Closing' : 'Set Manual Closing')
+                : null,
+            onAction: canSetClosing ? onTapClosing : null,
+          ),
+          if (canSetOpening || canSetClosing) ...[
+            const SizedBox(height: 10),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if (canSetOpening)
+                  OutlinedButton.icon(
+                    onPressed: onTapOpening,
+                    icon: Icon(
+                      hasManualOpening ? Icons.edit_note_rounded : Icons.add_circle_outline_rounded,
+                      size: 15,
+                      color: const Color(0xFF266540),
+                    ),
+                    label: Text(
+                      hasManualOpening ? 'Edit Opening Float' : 'Set Opening Float',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF266540)),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      side: const BorderSide(color: Color(0xFF266540), width: 1),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                if (canSetClosing)
+                  OutlinedButton.icon(
+                    onPressed: onTapClosing,
+                    icon: Icon(
+                      hasManualClosing ? Icons.edit_note_rounded : Icons.add_circle_outline_rounded,
+                      size: 15,
+                      color: accentColor,
+                    ),
+                    label: Text(
+                      hasManualClosing ? 'Edit Closing' : 'Set Closing',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: accentColor),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      side: BorderSide(color: accentColor, width: 1),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildFormulaRow(String label, String value, Color color, {bool isBold = false}) {
+  Widget _buildFormulaRow(
+    String label,
+    String value,
+    Color color, {
+    bool isBold = false,
+    String? badge,
+    IconData? actionIcon,
+    String? actionTooltip,
+    VoidCallback? onAction,
+  }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2.0),
+      padding: const EdgeInsets.symmetric(vertical: 2.5),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade700, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
-          Text(value, style: TextStyle(fontSize: 12, color: color, fontWeight: isBold ? FontWeight.bold : FontWeight.w600)),
+          Expanded(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                      fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (badge != null) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: const Color(0xFF2E7D32), width: 0.5),
+                    ),
+                    child: Text(
+                      badge,
+                      style: const TextStyle(
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2E7D32),
+                      ),
+                    ),
+                  ),
+                ],
+                if (actionIcon != null && onAction != null) ...[
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: onAction,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Tooltip(
+                      message: actionTooltip ?? 'Set Value',
+                      child: Padding(
+                        padding: const EdgeInsets.all(2.0),
+                        child: Icon(
+                          actionIcon,
+                          size: 15,
+                          color: const Color(0xFF266540),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            flex: 0,
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 12,
+                color: color,
+                fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  void _showSettlementOverrideDialog(
+    String overrideType,
+    SettlementDailySummary summary,
+  ) {
+    final isOpening = overrideType == 'opening';
+    final hasCurrentOverride = isOpening ? summary.hasManualOpening : summary.hasManualClosing;
+    final currentCash = isOpening ? (summary.manualOpeningCash ?? 0.0) : (summary.manualClosingCash ?? 0.0);
+    final currentUpi = isOpening ? (summary.manualOpeningUpi ?? 0.0) : (summary.manualClosingUpi ?? 0.0);
+    final currentReason = isOpening ? (summary.openingReason ?? '') : (summary.closingReason ?? '');
+
+    final cashController = TextEditingController(text: currentCash > 0 ? currentCash.toStringAsFixed(2) : '');
+    final upiController = TextEditingController(text: currentUpi > 0 ? currentUpi.toStringAsFixed(2) : '');
+    final reasonController = TextEditingController(text: currentReason);
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(
+                isOpening ? Icons.account_balance_wallet_rounded : Icons.lock_clock_rounded,
+                color: const Color(0xFF266540),
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  isOpening ? 'Set Manual Opening Float' : 'Set Manual Closing Balance',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F8F4),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFD4EAD9)),
+                    ),
+                    child: Text(
+                      isOpening
+                          ? 'Calculated opening is ₹0.00. Enter the verified physical starting balance (float) for this day.'
+                          : 'Calculated closing is ₹0.00. Enter the verified physical closing balance for this day.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade800),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: cashController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Cash Amount (₹)',
+                      prefixText: '₹ ',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    validator: (v) {
+                      if (v != null && v.trim().isNotEmpty) {
+                        final parsed = double.tryParse(v.trim());
+                        if (parsed == null || parsed < 0) return 'Enter a valid non-negative amount';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: upiController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'UPI Amount (₹)',
+                      prefixText: '₹ ',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    validator: (v) {
+                      if (v != null && v.trim().isNotEmpty) {
+                        final parsed = double.tryParse(v.trim());
+                        if (parsed == null || parsed < 0) return 'Enter a valid non-negative amount';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: reasonController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Audit Reason (Mandatory)',
+                      hintText: 'e.g., Morning petty cash drawer float',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) {
+                        return 'A justification reason is mandatory for audit records';
+                      }
+                      return null;
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            if (hasCurrentOverride)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogCtx).pop();
+                  _showResetConfirmDialog(overrideType);
+                },
+                child: const Text('Reset to ₹0', style: TextStyle(color: Colors.red)),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF266540),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final cash = double.tryParse(cashController.text.trim()) ?? 0.0;
+                final upi = double.tryParse(upiController.text.trim()) ?? 0.0;
+                final reason = reasonController.text.trim();
+
+                Navigator.of(dialogCtx).pop();
+                try {
+                  await ref.read(settlementProvider.notifier).saveOverride(
+                    overrideType: overrideType,
+                    cashAmount: cash,
+                    upiAmount: upi,
+                    reason: reason,
+                  );
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${isOpening ? "Opening" : "Closing"} adjustment saved with audit record.'),
+                      backgroundColor: const Color(0xFF266540),
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to save adjustment: $e'),
+                      backgroundColor: AppColors.error,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Save Adjustment'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showResetConfirmDialog(String overrideType) {
+    final reasonController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          title: const Text('Reset Adjustment to ₹0'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'This will clear the manual override and restore the natural calculated balance of ₹0.00. An audit entry will be recorded.',
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: reasonController,
+                  decoration: const InputDecoration(
+                    labelText: 'Reset Reason (Mandatory)',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter a reason for resetting' : null,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final reason = reasonController.text.trim();
+                Navigator.of(dialogCtx).pop();
+                try {
+                  await ref.read(settlementProvider.notifier).resetOverride(
+                    overrideType: overrideType,
+                    reason: reason,
+                  );
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Adjustment reset to natural ₹0.00 successfully.'),
+                      backgroundColor: Color(0xFF266540),
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Reset failed: $e'), backgroundColor: AppColors.error),
+                  );
+                }
+              },
+              child: const Text('Confirm Reset'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -658,14 +1118,18 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
         final rows = <List<dynamic>>[];
 
         // Opening balance row
+        final openingTitle = summary.hasManualOpening ? 'OPENING BALANCE (MANUAL FLOAT)' : 'OPENING BALANCE';
+        final openingDesc = summary.hasManualOpening
+            ? 'Manual Float (${summary.openingReason ?? "Admin Adjustment"})'
+            : 'Natural Opening Rollover';
         rows.add([
           '00:00',
-          'OPENING BALANCE',
-          'Natural Opening Rollover',
+          openingTitle,
+          openingDesc,
           'ALL',
-          summary.openingCash,
-          summary.openingUpi,
-          summary.openingTotal,
+          summary.effectiveOpeningCash,
+          summary.effectiveOpeningUpi,
+          summary.effectiveOpeningTotal,
         ]);
 
         for (final t in sState.dailyTransactions) {
@@ -681,14 +1145,20 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
         }
 
         // Closing balance row
+        final closingTitle = summary.hasManualClosing ? 'CLOSING BALANCE (MANUAL OVERRIDE)' : 'CLOSING BALANCE';
+        final closingDesc = summary.hasManualClosing
+            ? 'Manual Override (${summary.closingReason ?? "Admin Adjustment"})'
+            : (summary.hasManualOpening
+                ? 'Effective Opening + Sales - Expenses'
+                : 'Opening + Sales - Expenses');
         rows.add([
           '23:59',
-          'CLOSING BALANCE',
-          'Opening + Sales - Expenses',
+          closingTitle,
+          closingDesc,
           'ALL',
-          summary.closingCash,
-          summary.closingUpi,
-          summary.closingTotal,
+          summary.effectiveClosingCash,
+          summary.effectiveClosingUpi,
+          summary.effectiveClosingTotal,
         ]);
 
         // Gross Totals summary row
@@ -1031,8 +1501,10 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                runSpacing: 6,
                 children: [
                   const Text(
                     'Period:',
@@ -1042,7 +1514,6 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
                       color: AppColors.textPrimary,
                     ),
                   ),
-                  const SizedBox(width: 8),
                   _buildPeriodChip(
                     label: 'Daily',
                     isSelected: state.dateFilter == AdminDateFilter.today,
@@ -1051,7 +1522,6 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
                       notifier.loadReportData();
                     },
                   ),
-                  const SizedBox(width: 6),
                   _buildPeriodChip(
                     label: 'Monthly',
                     isSelected: state.dateFilter == AdminDateFilter.thisMonth,
@@ -1060,7 +1530,6 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
                       notifier.loadReportData();
                     },
                   ),
-                  const SizedBox(width: 6),
                   _buildPeriodChip(
                     label: 'Custom',
                     isSelected: state.dateFilter == AdminDateFilter.custom,
@@ -1252,42 +1721,36 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey.shade200),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: SizedBox(
-              height: 38,
-              child: TextField(
-                controller: _searchController,
-                onChanged: (v) => setState(() => _filterQuery = v.trim()),
-                decoration: InputDecoration(
-                  hintText: 'Search in results...',
-                  hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                  prefixIcon: const Icon(Icons.search, size: 18, color: Colors.grey),
-                  suffixIcon: _filterQuery.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, size: 16),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _filterQuery = '');
-                          },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: const Color(0xFFF8F9FA),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 420;
+          final searchField = SizedBox(
+            height: 38,
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _filterQuery = v.trim()),
+              decoration: InputDecoration(
+                hintText: 'Search in results...',
+                hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                prefixIcon: const Icon(Icons.search, size: 18, color: Colors.grey),
+                suffixIcon: _filterQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 16),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _filterQuery = '');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: const Color(0xFFF8F9FA),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '$recordCount records',
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF266540)),
-          ),
-          const SizedBox(width: 8),
-          PopupMenuButton<String>(
+          );
+
+          final exportButton = PopupMenuButton<String>(
             tooltip: 'Export',
             icon: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1309,8 +1772,38 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
               PopupMenuItem(value: 'excel', child: Text('Export Excel (.xlsx)')),
               PopupMenuItem(value: 'pdf', child: Text('Export PDF (.pdf)')),
             ],
-          ),
-        ],
+          );
+
+          final countText = Text(
+            '$recordCount records',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF266540)),
+            overflow: TextOverflow.ellipsis,
+          );
+
+          return isNarrow
+              ? Column(
+                  children: [
+                    searchField,
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        countText,
+                        exportButton,
+                      ],
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: searchField),
+                    const SizedBox(width: 8),
+                    countText,
+                    const SizedBox(width: 8),
+                    exportButton,
+                  ],
+                );
+        },
       ),
     );
   }

@@ -134,4 +134,46 @@ class SettlementNotifier extends Notifier<SettlementState> {
       state = state.copyWith(isLoading: false, errorMessage: e.toString());
     }
   }
+
+  /// Save manual override (opening or closing) when calculated value is zero.
+  Future<void> saveOverride({
+    required String overrideType,
+    required double cashAmount,
+    required double upiAmount,
+    required String reason,
+  }) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      await _repo.saveSettlementOverride(
+        targetDate: state.selectedDate,
+        overrideType: overrideType,
+        cashAmount: cashAmount,
+        upiAmount: upiAmount,
+        reason: reason,
+      );
+      await loadDailySettlement(state.selectedDate);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, errorMessage: e.toString());
+      rethrow;
+    }
+  }
+
+  /// Reset manual override back to natural zero.
+  Future<void> resetOverride({
+    required String overrideType,
+    required String reason,
+  }) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      await _repo.resetSettlementOverride(
+        targetDate: state.selectedDate,
+        overrideType: overrideType,
+        reason: reason,
+      );
+      await loadDailySettlement(state.selectedDate);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, errorMessage: e.toString());
+      rethrow;
+    }
+  }
 }

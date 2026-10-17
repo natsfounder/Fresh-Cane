@@ -33,9 +33,69 @@ class SettlementRepository {
           .neq('status', 'voided')
           .order('created_at', ascending: true);
 
+      final dateStr =
+          '${targetDate.year.toString().padLeft(4, '0')}-${targetDate.month.toString().padLeft(2, '0')}-${targetDate.day.toString().padLeft(2, '0')}';
+
+      // 3. Query settlement overrides up to targetDate (for baseline carry-forward & today's overrides)
+      List<dynamic> overridesList = const [];
+      try {
+        overridesList = await _client
+            .from('daily_settlement_overrides')
+            .select()
+            .lte('settlement_date', dateStr)
+            .order('settlement_date', ascending: true);
+      } catch (_) {
+        // Fallback gracefully if table or permissions are not yet provisioned
+      }
+
+      Map<String, dynamic>? todayOverride;
+      final priorOverrides = <Map<String, dynamic>>[];
+
+      for (final o in overridesList) {
+        if (o is Map<String, dynamic>) {
+          final sDate = o['settlement_date']?.toString();
+          if (sDate == dateStr) {
+            todayOverride = o;
+          } else if (sDate != null && sDate.compareTo(dateStr) < 0) {
+            priorOverrides.add(o);
+          }
+        }
+      }
+
+      // Find latest prior override baseline (closing override takes precedence over opening override)
+      Map<String, dynamic>? latestPrior;
+      for (int i = priorOverrides.length - 1; i >= 0; i--) {
+        final o = priorOverrides[i];
+        final hasOpening = (o['opening_cash'] != null && (o['opening_cash'] as num) > 0) ||
+            (o['opening_upi'] != null && (o['opening_upi'] as num) > 0);
+        final hasClosing = o['closing_cash'] != null || o['closing_upi'] != null;
+        if (hasOpening || hasClosing) {
+          latestPrior = o;
+          break;
+        }
+      }
+
+      DateTime? accumulatorStart;
       double openingCash = 0.0;
       double openingUpi = 0.0;
       double openingOther = 0.0;
+
+      if (latestPrior != null) {
+        final priorDateStr = latestPrior['settlement_date']?.toString() ?? '';
+        final parsedPriorDate = DateTime.tryParse(priorDateStr) ?? targetDate;
+        final priorLocalDay = DateTime(parsedPriorDate.year, parsedPriorDate.month, parsedPriorDate.day);
+
+        final hasClosing = latestPrior['closing_cash'] != null || latestPrior['closing_upi'] != null;
+        if (hasClosing) {
+          openingCash = (latestPrior['closing_cash'] as num?)?.toDouble() ?? 0.0;
+          openingUpi = (latestPrior['closing_upi'] as num?)?.toDouble() ?? 0.0;
+          accumulatorStart = priorLocalDay.add(const Duration(days: 1));
+        } else {
+          openingCash = (latestPrior['opening_cash'] as num?)?.toDouble() ?? 0.0;
+          openingUpi = (latestPrior['opening_upi'] as num?)?.toDouble() ?? 0.0;
+          accumulatorStart = priorLocalDay;
+        }
+      }
 
       double salesCash = 0.0;
       double salesUpi = 0.0;
@@ -56,13 +116,16 @@ class SettlementRepository {
         final billNum = billMap != null ? billMap['bill_number']?.toString() ?? '' : '';
 
         if (createdAt.isBefore(startOfDay)) {
-          // Contributes to Opening Balance prior to today
-          if (method == 'cash') {
-            openingCash += amt;
-          } else if (method == 'upi') {
-            openingUpi += amt;
-          } else {
-            openingOther += amt;
+          // Contributes to Opening Balance prior to today (since accumulatorStart if established)
+          final shouldAccumulate = accumulatorStart == null || !createdAt.isBefore(accumulatorStart);
+          if (shouldAccumulate) {
+            if (method == 'cash') {
+              openingCash += amt;
+            } else if (method == 'upi') {
+              openingUpi += amt;
+            } else {
+              openingOther += amt;
+            }
           }
         } else if (createdAt.isBefore(endOfDay)) {
           // Contributes to Today's Sales
@@ -94,13 +157,16 @@ class SettlementRepository {
         final name = e['expense_name_snapshot']?.toString() ?? 'Expense';
 
         if (createdAt.isBefore(startOfDay)) {
-          // Reduces Opening Balance prior to today
-          if (method == 'cash') {
-            openingCash -= amt;
-          } else if (method == 'upi') {
-            openingUpi -= amt;
-          } else {
-            openingOther -= amt;
+          // Reduces Opening Balance prior to today (since accumulatorStart if established)
+          final shouldAccumulate = accumulatorStart == null || !createdAt.isBefore(accumulatorStart);
+          if (shouldAccumulate) {
+            if (method == 'cash') {
+              openingCash -= amt;
+            } else if (method == 'upi') {
+              openingUpi -= amt;
+            } else {
+              openingOther -= amt;
+            }
           }
         } else if (createdAt.isBefore(endOfDay)) {
           // Contributes to Today's Expenses
@@ -127,6 +193,27 @@ class SettlementRepository {
       // Sort today's transactions chronologically
       dayTransactions.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
+      // Extract today's manual overrides if present
+      double? manualOpeningCash;
+      double? manualOpeningUpi;
+      double? manualClosingCash;
+      double? manualClosingUpi;
+      String? openingReason;
+      String? closingReason;
+      String? overrideUpdatedBy;
+      DateTime? overrideUpdatedAt;
+
+      if (todayOverride != null) {
+        manualOpeningCash = (todayOverride['opening_cash'] as num?)?.toDouble();
+        manualOpeningUpi = (todayOverride['opening_upi'] as num?)?.toDouble();
+        manualClosingCash = (todayOverride['closing_cash'] as num?)?.toDouble();
+        manualClosingUpi = (todayOverride['closing_upi'] as num?)?.toDouble();
+        openingReason = todayOverride['opening_reason']?.toString();
+        closingReason = todayOverride['closing_reason']?.toString();
+        overrideUpdatedBy = todayOverride['updated_by']?.toString();
+        overrideUpdatedAt = DateTime.tryParse(todayOverride['updated_at']?.toString() ?? '');
+      }
+
       final summary = SettlementDailySummary(
         date: targetDate,
         openingCash: openingCash,
@@ -138,6 +225,14 @@ class SettlementRepository {
         expensesCash: expensesCash,
         expensesUpi: expensesUpi,
         expensesOther: expensesOther,
+        manualOpeningCash: manualOpeningCash,
+        manualOpeningUpi: manualOpeningUpi,
+        manualClosingCash: manualClosingCash,
+        manualClosingUpi: manualClosingUpi,
+        openingReason: openingReason,
+        closingReason: closingReason,
+        overrideUpdatedBy: overrideUpdatedBy,
+        overrideUpdatedAt: overrideUpdatedAt,
       );
 
       return (summary: summary, transactions: dayTransactions);
@@ -147,6 +242,46 @@ class SettlementRepository {
         transactions: const <SettlementTransactionItem>[],
       );
     }
+  }
+
+  /// Save manual settlement override for a given date when calculated amount is zero.
+  Future<void> saveSettlementOverride({
+    required DateTime targetDate,
+    required String overrideType, // 'opening' or 'closing'
+    required double cashAmount,
+    required double upiAmount,
+    required String reason,
+  }) async {
+    final startOfDay = DateTime(targetDate.year, targetDate.month, targetDate.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+    final dateStr =
+        '${targetDate.year.toString().padLeft(4, '0')}-${targetDate.month.toString().padLeft(2, '0')}-${targetDate.day.toString().padLeft(2, '0')}';
+
+    await _client.rpc('save_daily_settlement_override', params: {
+      'p_settlement_date': dateStr,
+      'p_override_type': overrideType,
+      'p_cash_amount': cashAmount,
+      'p_upi_amount': upiAmount,
+      'p_reason': reason,
+      'p_start_of_day_utc': startOfDay.toUtc().toIso8601String(),
+      'p_end_of_day_utc': endOfDay.toUtc().toIso8601String(),
+    });
+  }
+
+  /// Reset manual settlement override for a given date back to calculated zero.
+  Future<void> resetSettlementOverride({
+    required DateTime targetDate,
+    required String overrideType, // 'opening', 'closing', or 'both'
+    required String reason,
+  }) async {
+    final dateStr =
+        '${targetDate.year.toString().padLeft(4, '0')}-${targetDate.month.toString().padLeft(2, '0')}-${targetDate.day.toString().padLeft(2, '0')}';
+
+    await _client.rpc('reset_daily_settlement_override', params: {
+      'p_settlement_date': dateStr,
+      'p_override_type': overrideType,
+      'p_reason': reason,
+    });
   }
 
   /// Fetch Monthly Settlement for a selected month
@@ -223,7 +358,6 @@ class SettlementRepository {
       final List<SettlementMonthlyDay> result = [];
       for (int d = 1; d <= daysInMonth; d++) {
         final data = dayMap[d]!;
-        // Show all days that have any activity, or up to today if in current month
         final dayDate = DateTime(selectedMonth.year, selectedMonth.month, d);
         result.add(SettlementMonthlyDay(
           date: dayDate,

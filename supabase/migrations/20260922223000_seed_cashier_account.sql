@@ -11,7 +11,7 @@ BEGIN
 
     IF v_existing_cashier_id IS NOT NULL THEN
         UPDATE auth.users
-        SET encrypted_password = crypt('cashier@123', gen_salt('bf', 10)),
+        SET encrypted_password = extensions.crypt('cashier@123', extensions.gen_salt('bf', 10)),
             email_confirmed_at = COALESCE(email_confirmed_at, now()),
             raw_app_meta_data = '{"provider":"email","providers":["email"]}'::jsonb,
             raw_user_meta_data = '{"full_name":"Fresh Cane Cashier"}'::jsonb,
@@ -63,7 +63,7 @@ BEGIN
             'authenticated',
             'authenticated',
             'cashier@freshcane.dev',
-            crypt('cashier@123', gen_salt('bf', 10)),
+            extensions.crypt('cashier@123', extensions.gen_salt('bf', 10)),
             now(),
             '{"provider":"email","providers":["email"]}'::jsonb,
             '{"full_name":"Fresh Cane Cashier"}'::jsonb,

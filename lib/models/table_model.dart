@@ -43,6 +43,8 @@ class RestaurantTable {
     int seatings = 0;
     bool hasFinished = false;
 
+    String effectiveStatus = json['status'] as String? ?? 'available';
+
     if (json['active_seatings_count'] != null) {
       seatings = (json['active_seatings_count'] as num).toInt();
     } else if (json['table_sessions'] != null && json['table_sessions'] is List) {
@@ -50,6 +52,7 @@ class RestaurantTable {
       final activeSessions =
           sessions.where((s) => s['status'] == 'active' || s['status'] == 'billing').toList();
       if (activeSessions.isNotEmpty) {
+        effectiveStatus = activeSessions.first['status'] == 'billing' ? 'billing' : 'occupied';
         final customers =
             activeSessions.first['table_session_customers'] as List?;
         if (customers != null) {
@@ -58,6 +61,9 @@ class RestaurantTable {
         } else {
           seatings = 1;
         }
+      } else {
+        effectiveStatus = 'available';
+        seatings = 0;
       }
     } else if (json['status'] == 'occupied') {
       seatings = 1;
@@ -71,7 +77,7 @@ class RestaurantTable {
       id: json['id'] as String,
       tableNumber: json['table_number'] as String,
       seatingCapacity: (json['seating_capacity'] as num?)?.toInt() ?? 4,
-      status: json['status'] as String? ?? 'available',
+      status: effectiveStatus,
       isActive: json['is_active'] as bool? ?? true,
       activeSeatingsCount: seatings,
       hasFinishedCustomers: hasFinished,
