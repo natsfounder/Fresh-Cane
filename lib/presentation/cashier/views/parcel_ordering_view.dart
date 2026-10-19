@@ -4,24 +4,80 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/theme/responsive.dart';
+import '../../../core/utils/date_time_utils.dart';
+import '../../../models/bill_model.dart';
 import '../../../models/cart_item_model.dart';
 import '../../../models/category_model.dart';
 import '../../../models/menu_item_model.dart';
 import '../../../models/payment_model.dart';
+import '../../../services/supabase_service.dart';
 import '../../../state/cashier_provider.dart';
 import '../../server/widgets/item_customization_modal.dart';
+import '../widgets/edit_parcel_order_dialog.dart';
 import '../widgets/payment_dialog.dart';
 import '../widgets/receipt_dialog.dart';
 import '../../common/product_image_widget.dart';
 
+/// Checkout action chosen in the Parcel Order review sheet.
+enum ParcelCheckoutAction {
+  payLater,
+  payNow,
+}
+
+/// Representation of an unpaid parcel order awaiting settlement at pickup.
+class _PendingParcelBill {
+  final String billId;
+  final String billNumber;
+  final String orderId;
+  final String orderNumber;
+  final String customerName;
+  final String customerPhone;
+  final double finalAmount;
+  final DateTime createdAt;
+  final List<_PendingBillItem> items;
+  final Bill billModel;
+
+  const _PendingParcelBill({
+    required this.billId,
+    required this.billNumber,
+    required this.orderId,
+    required this.orderNumber,
+    required this.customerName,
+    required this.customerPhone,
+    required this.finalAmount,
+    required this.createdAt,
+    required this.items,
+    required this.billModel,
+  });
+}
+
+class _PendingBillItem {
+  final String id;
+  final String? menuItemId;
+  final String name;
+  final int quantity;
+  final double unitPrice;
+  final double totalPrice;
+  final String? notes;
+
+  const _PendingBillItem({
+    required this.id,
+    this.menuItemId,
+    required this.name,
+    required this.quantity,
+    required this.unitPrice,
+    required this.totalPrice,
+    this.notes,
+  });
+}
+
 /// Cashier Parcel / Takeaway Ordering View.
 ///
-/// Designed to be EXACTLY the same layout and user experience as the server order-taking screen:
-/// - Left panel: Vertical Category selector with wood gradient, category imagery, and badge counts.
-/// - Right panel: Search bar, category banner, menu items grid with Swiggy/Zomato inline Add/Minus stepper.
-/// - Item Customisation: Modal for add-ons (ginger, lemon, etc.), ice level, and sugar levels.
-/// - Bottom bar: Docked running cart summary with instant Review & Settle action.
-/// - Review & Settle: Customer name & phone number capture, instant bill generation, payment dialog, and receipt.
+/// Features:
+/// - Top Tab Bar: [ 📝 Take Order ] vs [ ⏳ Waiting for Settlement (count) ]
+/// - Fast Parcel Ordering: Category selector, menu item grid, customization, live cart.
+/// - Flexible Payment Flow: Pay Now (immediate settlement) or Pay Later (customer waits for juice, settles upon delivery).
+/// - Waiting Queue: Settle pending takeaway orders upon pickup or cancel unpaid orders.
 class ParcelOrderingView extends ConsumerStatefulWidget {
   const ParcelOrderingView({super.key});
 
@@ -41,6 +97,19 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
   /// Active cart items for this parcel order (keyed by menuItem.id)
   final Map<String, CartItem> _cart = {};
 
+  /// 0 = Take Order, 1 = Waiting for Settlement
+  int _selectedTab = 0;
+
+  /// Pending unpaid takeaway bills
+  bool _isLoadingPending = false;
+  String? _pendingError;
+  List<_PendingParcelBill> _pendingBills = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPendingBills();
+  }
 
   @override
   void dispose() {
@@ -107,6 +176,92 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
     );
   }
 
+  Future<void> _loadPendingBills() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingPending = true;
+      _pendingError = null;
+    });
+
+    try {
+      final client = SupabaseService.client;
+      // Fetch unpaid bills joined with takeaway orders
+      final data = await client
+          .from('bills')
+          .select(
+            '*, '
+            'orders(id, order_type, order_number, customer_name, customer_phone, notes, '
+            'order_items(id, menu_item_id, item_name_snapshot, quantity, unit_price_snapshot, item_total, special_instructions, status))'
+          )
+          .eq('status', 'unpaid')
+          .order('created_at', ascending: false);
+
+      final List<_PendingParcelBill> loaded = [];
+
+      for (final row in (data as List<dynamic>)) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final order = map['orders'] as Map<String, dynamic>?;
+        final rawOrderType = (order?['order_type'] as String?)?.toLowerCase() ?? '';
+        if (rawOrderType != 'takeaway' && rawOrderType != 'parcel') {
+          continue;
+        }
+
+        final billModel = Bill.fromJson(map);
+        final rawItems = (order?['order_items'] as List<dynamic>?) ?? [];
+        final List<_PendingBillItem> items = [];
+
+        for (final it in rawItems) {
+          final itMap = Map<String, dynamic>.from(it as Map);
+          final itemStatus = (itMap['status'] as String?)?.toLowerCase();
+          if (itemStatus == 'cancelled') continue;
+
+          final qty = (itMap['quantity'] as num?)?.toInt() ?? 1;
+          final unitP = (itMap['unit_price_snapshot'] as num?)?.toDouble() ?? 0.0;
+          final totalP = (itMap['item_total'] as num?)?.toDouble() ?? (unitP * qty);
+          final instructions = itMap['special_instructions'] as String?;
+
+          items.add(_PendingBillItem(
+            id: itMap['id'] as String? ?? '',
+            menuItemId: itMap['menu_item_id'] as String?,
+            name: itMap['item_name_snapshot'] as String? ?? 'Item',
+            quantity: qty,
+            unitPrice: unitP,
+            totalPrice: totalP,
+            notes: instructions,
+          ));
+        }
+
+        loaded.add(_PendingParcelBill(
+          billId: billModel.id,
+          billNumber: billModel.billNumber,
+          orderId: order?['id'] as String? ?? billModel.orderId,
+          orderNumber: order?['order_number'] as String? ?? 'ORD-0000',
+          customerName: billModel.customerNameSnapshot ?? order?['customer_name'] as String? ?? 'Parcel Customer',
+          customerPhone: billModel.customerPhoneSnapshot ?? order?['customer_phone'] as String? ?? '',
+          finalAmount: billModel.finalAmount,
+          createdAt: billModel.createdAt,
+          items: items,
+          billModel: billModel,
+        ));
+      }
+
+      if (mounted) {
+        setState(() {
+          _pendingBills = loaded;
+          _isLoadingPending = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading pending parcel bills: $e');
+      if (mounted) {
+        setState(() {
+          _pendingError = e.toString();
+          _isLoadingPending = false;
+        });
+      }
+    }
+  }
+
   Future<void> _handleReviewAndSettle() async {
     HapticFeedback.lightImpact();
     if (_cart.isEmpty) {
@@ -116,7 +271,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
       return;
     }
 
-    final confirmed = await showModalBottomSheet<bool>(
+    final action = await showModalBottomSheet<ParcelCheckoutAction>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -124,12 +279,12 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
       builder: (bCtx) => _buildReviewBottomSheet(bCtx),
     );
 
-    if (confirmed == true && mounted) {
-      await _submitAndSettleOrder();
+    if (action != null && mounted) {
+      await _processParcelOrder(action);
     }
   }
 
-  Future<void> _submitAndSettleOrder() async {
+  Future<void> _processParcelOrder(ParcelCheckoutAction action) async {
     final billingRepo = ref.read(billingRepositoryProvider);
     final cashierNotifier = ref.read(cashierProvider.notifier);
 
@@ -157,6 +312,42 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
 
       if (mounted) Navigator.pop(context); // Dismiss loading dialog
 
+      if (action == ParcelCheckoutAction.payLater) {
+        // Customer 1 opts to pay later when parcel arrives:
+        // Clear cart immediately so cashier is ready for Customer 2 on spot!
+        setState(() {
+          _cart.clear();
+          _customerPhoneController.clear();
+          _customerNameController.text = 'Parcel Customer';
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFF15803D),
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Parcel order placed (${orderResult['order_number'] ?? 'Token'}). Waiting for settlement.',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+
+        // Refresh pending list
+        await _loadPendingBills();
+        return;
+      }
+
+      // If action is payNow:
       if (mounted) {
         final payments = await PaymentDialog.show(
           context: context,
@@ -191,9 +382,32 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
                   _cart.clear();
                   _customerPhoneController.clear();
                   _customerNameController.text = 'Parcel Customer';
-                                  });
+                });
+                _loadPendingBills();
               },
             );
+          }
+        } else {
+          // If cashier/customer closed or cancelled payment dialog:
+          // The order is NOT lost! It stays unpaid in the "Waiting for Settlement" queue.
+          // Clear cart so cashier can serve Customer 2!
+          if (mounted) {
+            setState(() {
+              _cart.clear();
+              _customerPhoneController.clear();
+              _customerNameController.text = 'Parcel Customer';
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: const Color(0xFFEA580C),
+                content: Text(
+                  'Payment postponed. Order #${orderResult['order_number'] ?? ''} saved in Waiting for Settlement.',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                duration: const Duration(seconds: 4),
+              ),
+            );
+            await _loadPendingBills();
           }
         }
       }
@@ -208,6 +422,214 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
         );
       }
     }
+  }
+
+  Future<void> _handleSettlePendingBill(_PendingParcelBill pendingBill) async {
+    HapticFeedback.lightImpact();
+    final cashierNotifier = ref.read(cashierProvider.notifier);
+
+    try {
+      final payments = await PaymentDialog.show(
+        context: context,
+        bill: pendingBill.billModel,
+      );
+
+      if (payments != null && payments.isNotEmpty && mounted) {
+        final success = await cashierNotifier.settleBill(pendingBill.billId, payments);
+        if (success && mounted) {
+          final firstPmt = payments.first;
+          final paymentObj = Payment(
+            id: 'pmt_${DateTime.now().millisecondsSinceEpoch}',
+            billId: pendingBill.billId,
+            paymentMethod: firstPmt['method'] as String? ?? 'cash',
+            amount: pendingBill.finalAmount,
+            cashTendered: (firstPmt['cash_tendered'] as num?)?.toDouble(),
+            changeReturned: (firstPmt['cash_tendered'] as num?) != null
+                ? ((firstPmt['cash_tendered'] as num).toDouble() - pendingBill.finalAmount)
+                : null,
+            transactionReference: firstPmt['transaction_reference'] as String?,
+            receivedBy: 'cashier',
+            status: 'completed',
+            createdAt: DateTime.now(),
+          );
+
+          ReceiptDialog.show(
+            context,
+            bill: pendingBill.billModel,
+            payment: paymentObj,
+            onFinish: () {
+              _loadPendingBills();
+            },
+          );
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFF15803D),
+              content: Text(
+                'Parcel Bill #${pendingBill.billNumber} settled successfully!',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          );
+
+          await _loadPendingBills();
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Settlement failed: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleCancelPendingOrder(_PendingParcelBill pendingBill) async {
+    HapticFeedback.lightImpact();
+    final reasonController = TextEditingController(text: 'Customer cancelled parcel before payment');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.cancel_outlined, color: AppColors.error, size: 22),
+            SizedBox(width: 8),
+            Text('Cancel Parcel Order', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to cancel Order #${pendingBill.orderNumber} (Bill #${pendingBill.billNumber})?',
+              style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Total: ₹${pendingBill.finalAmount.toStringAsFixed(2)} • Customer: ${pendingBill.customerName}',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: reasonController,
+              decoration: InputDecoration(
+                labelText: 'Cancellation Reason',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('Keep Order', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: const Text('Yes, Cancel Order', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const Center(
+            child: CircularProgressIndicator(color: AppColors.primaryGreen),
+          ),
+        );
+
+        final billingRepo = ref.read(billingRepositoryProvider);
+        await billingRepo.cancelUnpaidParcelOrder(
+          billId: pendingBill.billId,
+          reason: reasonController.text.trim().isNotEmpty
+              ? reasonController.text.trim()
+              : 'Customer cancelled parcel before payment',
+        );
+
+        if (mounted) Navigator.pop(context); // dismiss loading dialog
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Order #${pendingBill.orderNumber} cancelled successfully.'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+
+        await _loadPendingBills();
+      } catch (e) {
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pop(); // dismiss loading
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Cancellation failed: $e'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleEditPendingOrder(_PendingParcelBill pendingBill) async {
+    HapticFeedback.lightImpact();
+    final editItems = pendingBill.items
+        .map((i) => EditParcelOrderItem(
+              id: i.id,
+              menuItemId: i.menuItemId,
+              name: i.name,
+              unitPrice: i.unitPrice,
+              quantity: i.quantity,
+            ))
+        .toList();
+
+    final updated = await EditParcelOrderDialog.show(
+      context: context,
+      billId: pendingBill.billId,
+      billNumber: pendingBill.billNumber,
+      orderNumber: pendingBill.orderNumber,
+      customerName: pendingBill.customerName,
+      initialItems: editItems,
+    );
+
+    if (updated == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF15803D),
+          content: Text(
+            'Parcel #${pendingBill.orderNumber} updated successfully!',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+      );
+      await _loadPendingBills();
+    }
+  }
+
+  String _formatElapsed(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    final hrs = diff.inHours;
+    final mins = diff.inMinutes % 60;
+    return '${hrs}h ${mins}m ago';
   }
 
   Widget _buildReviewBottomSheet(BuildContext bCtx) {
@@ -375,22 +797,81 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
                 ),
                 const SizedBox(height: 20),
 
-                // Confirm and Pay Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryGreen,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                // Action Buttons: Pay Later (Settle on pickup) vs Pay Now (Immediate)
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 50,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFC2410C),
+                            backgroundColor: const Color(0xFFFFF7ED),
+                            side: const BorderSide(color: Color(0xFFEA580C), width: 1.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                          onPressed: () {
+                            if (!_customerFormKey.currentState!.validate()) return;
+                            Navigator.pop(bCtx, ParcelCheckoutAction.payLater);
+                          },
+                          icon: const Icon(Icons.hourglass_top_rounded, size: 18),
+                          label: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Pay Later',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFFC2410C)),
+                              ),
+                              Text(
+                                'Settle on pickup',
+                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFFEA580C)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
-                    onPressed: () {
-                      if (!_customerFormKey.currentState!.validate()) return;
-                      Navigator.pop(bCtx, true);
-                    },
-                    child: const Text('Confirm & Proceed to Payment', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                  ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: SizedBox(
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryGreen,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                          onPressed: () {
+                            if (!_customerFormKey.currentState!.validate()) return;
+                            Navigator.pop(bCtx, ParcelCheckoutAction.payNow);
+                          },
+                          icon: const Icon(Icons.flash_on_rounded, size: 18),
+                          label: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Pay Now',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+                              ),
+                              Text(
+                                'Immediate payment',
+                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -425,7 +906,141 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
 
     return Column(
       children: [
-        // ─── 1. Header with Search Bar + Cart Pill ─────────────────────────
+        // ─── 0. Top Segmented Tab Switcher (Take Order vs Waiting for Settlement) ───
+        _buildTopTabBar(context),
+
+        // ─── 1. Content View ──────────────────────────────────────────
+        Expanded(
+          child: _selectedTab == 0
+              ? _buildTakeOrderView(context, categories, filteredItems)
+              : _buildWaitingForSettlementView(),
+        ),
+      ],
+    );
+  }
+
+  // ─── Top Segmented Tab Switcher ────────────────────────────────────────────
+
+  Widget _buildTopTabBar(BuildContext context) {
+    final isCompact = Responsive.isCompact(context);
+    final waitingTitle = isCompact ? 'Waiting' : 'Waiting for Settlement';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: AppColors.borderLight, width: 1)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildSegmentButton(
+              title: 'Take Order',
+              icon: Icons.edit_note_rounded,
+              isSelected: _selectedTab == 0,
+              onTap: () {
+                if (_selectedTab != 0) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _selectedTab = 0);
+                }
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildSegmentButton(
+              title: waitingTitle,
+              icon: Icons.hourglass_top_rounded,
+              badgeCount: _pendingBills.length,
+              isSelected: _selectedTab == 1,
+              onTap: () {
+                if (_selectedTab != 1) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _selectedTab = 1);
+                  _loadPendingBills();
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSegmentButton({
+    required String title,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+    int badgeCount = 0,
+  }) {
+    return Material(
+      color: isSelected ? AppColors.primaryGreen : Colors.grey.shade100,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isSelected ? Colors.white : AppColors.textPrimary,
+              ),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : AppColors.textPrimary,
+                    fontSize: 12,
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (badgeCount > 0) ...[
+                const SizedBox(width: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                  decoration: BoxDecoration(
+                    color: isSelected ? Colors.white : const Color(0xFFEA580C),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$badgeCount',
+                    style: TextStyle(
+                      color: isSelected ? AppColors.primaryGreen : Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─── Take Order View (Search + Categories + Menu Grid + Cart) ───────────────
+
+  Widget _buildTakeOrderView(
+    BuildContext context,
+    List<Category> categories,
+    List<MenuItem> filteredItems,
+  ) {
+    return Column(
+      children: [
+        // ─── Header with Search Bar + Cart Pill ─────────────────────────
         Container(
           height: Responsive.headerHeight(context),
           padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -505,7 +1120,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
           ),
         ),
 
-        // ─── 2. Main Layout (Categories Left + Menu Center + Live Cart Right on Tablet) ───
+        // ─── Main Layout (Categories Left + Menu Center + Live Cart Right on Tablet) ───
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -543,7 +1158,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
           ),
         ),
 
-        // ─── 3. Docked Running Bottom Bar (Mobile / Portrait only) ─────────
+        // ─── Docked Running Bottom Bar (Mobile / Portrait only) ─────────
         LayoutBuilder(
           builder: (context, constraints) {
             final isThreePane = MediaQuery.sizeOf(context).width >= 840;
@@ -552,6 +1167,432 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
           },
         ),
       ],
+    );
+  }
+
+  // ─── Waiting for Settlement View ───────────────────────────────────────────
+
+  Widget _buildWaitingForSettlementView() {
+    if (_isLoadingPending) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: AppColors.primaryGreen),
+            SizedBox(height: 12),
+            Text(
+              'Loading pending parcel orders...',
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_pendingError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 48),
+              const SizedBox(height: 12),
+              Text(
+                'Failed to load pending bills:\n$_pendingError',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: _loadPendingBills,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Retry'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_pendingBills.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFBBF7D0), width: 2),
+                ),
+                child: const Icon(
+                  Icons.task_alt_rounded,
+                  size: 56,
+                  color: Color(0xFF16A34A),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'No Pending Parcel Orders',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.primaryDark,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'All takeaway orders are paid and settled.\nNew orders placed with "Pay Later" will appear here.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  setState(() => _selectedTab = 0);
+                },
+                icon: const Icon(Icons.add_shopping_cart_rounded, size: 18),
+                label: const Text('Take New Parcel Order'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        // Sub-header bar with count and refresh
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFFBEB),
+            border: Border(bottom: BorderSide(color: Colors.amber.shade200)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline_rounded, size: 18, color: Color(0xFFB45309)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${_pendingBills.length} ${_pendingBills.length == 1 ? "parcel order" : "parcel orders"} waiting for customer pickup & payment',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF92400E),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, size: 20, color: Color(0xFF92400E)),
+                tooltip: 'Refresh Queue',
+                visualDensity: VisualDensity.compact,
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  _loadPendingBills();
+                },
+              ),
+            ],
+          ),
+        ),
+
+        // List of pending cards
+        Expanded(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: ListView.separated(
+                padding: const EdgeInsets.all(16),
+                itemCount: _pendingBills.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final bill = _pendingBills[index];
+                  return _buildPendingBillCard(bill);
+                },
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPendingBillCard(_PendingParcelBill bill) {
+    final elapsedStr = _formatElapsed(bill.createdAt);
+    final timeStr = AppDateTime.formatTime(bill.createdAt);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.orange.shade200, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Top header: Order # + Bill # + Time
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF7ED),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
+              border: Border(bottom: BorderSide(color: Colors.orange.shade100)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEA580C),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.takeout_dining_rounded, size: 12, color: Colors.white),
+                      const SizedBox(width: 3),
+                      Text(
+                        '#${bill.orderNumber}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Bill #${bill.billNumber}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.schedule_rounded, size: 12, color: Colors.grey),
+                    const SizedBox(width: 3),
+                    Text(
+                      '$timeStr ($elapsedStr)',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Customer details
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Row(
+              children: [
+                const Icon(Icons.person_rounded, size: 15, color: AppColors.primaryGreen),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    bill.customerPhone.isNotEmpty
+                        ? '${bill.customerName.isNotEmpty ? bill.customerName : "Customer"} • ${bill.customerPhone}'
+                        : (bill.customerName.isNotEmpty ? bill.customerName : 'Parcel Customer'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const Divider(height: 1, indent: 14, endIndent: 14),
+
+          // Items list
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Column(
+              children: bill.items.map((item) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryLight,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '${item.quantity}x',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primaryDark,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item.name,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            if (item.notes != null && item.notes!.isNotEmpty)
+                              Text(
+                                item.notes!,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey.shade600,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '₹${item.totalPrice.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryDark,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+
+          const Divider(height: 1),
+
+          // Bottom summary & action buttons
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'To Collect',
+                      style: TextStyle(fontSize: 9.5, color: Colors.grey, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      '₹${bill.finalAmount.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: AppColors.primaryDark,
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+
+                // Edit button
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF0284C7),
+                    backgroundColor: const Color(0xFFF0F9FF),
+                    side: const BorderSide(color: Color(0xFFBAE6FD)),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => _handleEditPendingOrder(bill),
+                  icon: const Icon(Icons.edit_outlined, size: 14),
+                  label: const Text('Edit', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 6),
+
+                // Cancel button
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: BorderSide(color: Colors.red.shade300),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => _handleCancelPendingOrder(bill),
+                  child: const Text('Cancel', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 6),
+
+                // Collect & Settle button
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => _handleSettlePendingBill(bill),
+                  icon: const Icon(Icons.payments_rounded, size: 14),
+                  label: const Text('Collect & Settle', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

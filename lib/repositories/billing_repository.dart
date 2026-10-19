@@ -170,6 +170,100 @@ class BillingRepository {
     }
   }
 
+  /// Swap the payment method for a same-day settled bill via RPC `swap_bill_payment_method`.
+  Future<Map<String, dynamic>> swapBillPaymentMethod({
+    required String billId,
+    required List<Map<String, dynamic>> payments,
+    String? reason,
+  }) async {
+    if (payments.isEmpty) {
+      throw const RepositoryFailureException('At least one payment entry is required');
+    }
+
+    try {
+      final response = await _client.rpc(
+        'swap_bill_payment_method',
+        params: {
+          'p_bill_id': billId,
+          'p_new_payments': payments,
+          'p_reason': reason,
+        },
+      );
+
+      if (response == null || response is! Map) {
+        throw const RepositoryFailureException('Invalid response returned when swapping bill payment method');
+      }
+
+      return Map<String, dynamic>.from(response);
+    } on PostgrestException catch (e) {
+      debugPrint('PostgrestException during swap_bill_payment_method: ${e.message}');
+      throw _mapPostgrestException(e);
+    } catch (e) {
+      debugPrint('Unexpected error swapping bill payment method: $e');
+      rethrow;
+    }
+  }
+
+  /// Cancel an unpaid parcel order via RPC `cancel_unpaid_parcel_order`.
+  Future<Map<String, dynamic>> cancelUnpaidParcelOrder({
+    required String billId,
+    String reason = 'Customer cancelled parcel before payment',
+  }) async {
+    try {
+      final response = await _client.rpc(
+        'cancel_unpaid_parcel_order',
+        params: {
+          'p_bill_id': billId,
+          'p_reason': reason,
+        },
+      );
+
+      if (response == null || response is! Map) {
+        throw const RepositoryFailureException('Invalid response returned when cancelling parcel order');
+      }
+
+      return Map<String, dynamic>.from(response);
+    } on PostgrestException catch (e) {
+      debugPrint('PostgrestException during cancel_unpaid_parcel_order: ${e.message}');
+      throw _mapPostgrestException(e);
+    } catch (e) {
+      debugPrint('Unexpected error cancelling parcel order: $e');
+      rethrow;
+    }
+  }
+
+  /// Edit items in a parcel order/bill via RPC `edit_parcel_bill`.
+  Future<Map<String, dynamic>> editParcelBill({
+    required String billId,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    if (items.isEmpty) {
+      throw const RepositoryFailureException('Cannot edit a parcel bill with no items');
+    }
+
+    try {
+      final response = await _client.rpc(
+        'edit_parcel_bill',
+        params: {
+          'p_bill_id': billId,
+          'p_items': items,
+        },
+      );
+
+      if (response == null || response is! Map) {
+        throw const RepositoryFailureException('Invalid response returned when editing parcel bill');
+      }
+
+      return Map<String, dynamic>.from(response);
+    } on PostgrestException catch (e) {
+      debugPrint('PostgrestException during edit_parcel_bill: ${e.message}');
+      throw _mapPostgrestException(e);
+    } catch (e) {
+      debugPrint('Unexpected error editing parcel bill: $e');
+      rethrow;
+    }
+  }
+
   /// Close table session after all billing/payments are complete.
   Future<void> closeTableSession(String tableId, {String reason = 'Session completed & billed'}) async {
     try {

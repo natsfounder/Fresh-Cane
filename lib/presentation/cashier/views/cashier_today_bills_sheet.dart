@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/date_time_utils.dart';
+import '../../../repositories/billing_repository.dart';
 import '../../../services/supabase_service.dart';
 
 /// Representation of an individual item within a billed order.
@@ -37,6 +38,7 @@ class _BillRow {
   final String? orderId;
   final bool isEdited;
   final List<_BilledItem> items;
+  final List<Map<String, dynamic>> payments;
 
   const _BillRow({
     required this.id,
@@ -51,7 +53,36 @@ class _BillRow {
     this.orderId,
     this.isEdited = false,
     this.items = const [],
+    this.payments = const [],
   });
+
+  String get paymentSummary {
+    if (payments.isEmpty) return 'PAID';
+    if (payments.length == 1) {
+      final m = payments.first['payment_method']?.toString().toUpperCase() ?? 'PAID';
+      return m;
+    }
+    final cashPmt = payments.firstWhere(
+      (p) => (p['payment_method']?.toString().toLowerCase()) == 'cash',
+      orElse: () => {},
+    );
+    final upiPmt = payments.firstWhere(
+      (p) => (p['payment_method']?.toString().toLowerCase()) == 'upi',
+      orElse: () => {},
+    );
+    final cashAmt = (cashPmt['amount'] as num?)?.toDouble() ?? 0.0;
+    final upiAmt = (upiPmt['amount'] as num?)?.toDouble() ?? 0.0;
+    if (cashAmt > 0 && upiAmt > 0) {
+      return 'SPLIT (₹${cashAmt.toStringAsFixed(0)} / ₹${upiAmt.toStringAsFixed(0)})';
+    }
+    return 'SPLIT';
+  }
+
+  String get primaryPaymentMethod {
+    if (payments.isEmpty) return 'cash';
+    if (payments.length > 1) return 'split';
+    return payments.first['payment_method']?.toString().toLowerCase() ?? 'cash';
+  }
 }
 
 /// Modal bottom sheet showing Today's Billed Items directly from the database.
@@ -101,14 +132,15 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
       final todayStr = DateFormat('yyyy-MM-dd').format(now);
       final startOfDay = DateTime(now.year, now.month, now.day).toIso8601String();
 
-      // Query bills joined with orders and order_items
+      // Query bills joined with orders, order_items, and payments
       // Note: item_total is the generated column in order_items
       final data = await client
           .from('bills')
           .select(
             'id, bill_number, final_amount, status, created_at, business_date, '
             'customer_name_snapshot, customer_phone_snapshot, '
-            'orders(id, order_type, order_number, notes, order_items(id, menu_item_id, item_name_snapshot, quantity, unit_price_snapshot, item_total, status))',
+            'orders(id, order_type, order_number, notes, order_items(id, menu_item_id, item_name_snapshot, quantity, unit_price_snapshot, item_total, status)), '
+            'payments(id, payment_method, amount, cash_tendered, change_returned, transaction_reference, status)',
           )
           .or('business_date.eq.$todayStr,created_at.gte.$startOfDay')
           .order('created_at', ascending: false);
@@ -146,6 +178,13 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
           ));
         }
 
+        // Extract payments
+        final rawPayments = (map['payments'] as List<dynamic>?) ?? [];
+        final List<Map<String, dynamic>> payments = rawPayments
+            .map((p) => Map<String, dynamic>.from(p as Map))
+            .where((p) => (p['status'] as String?)?.toLowerCase() != 'failed')
+            .toList();
+
         final bill = _BillRow(
           id: map['id'] as String? ?? '',
           billNumber: map['bill_number'] as String? ?? '-',
@@ -161,6 +200,7 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
           orderId: order?['id'] as String?,
           isEdited: isEdited,
           items: items,
+          payments: payments,
         );
 
         if (isTakeaway) {
@@ -187,7 +227,32 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
     }
   }
 
+  Future<void> _openSwapPaymentDialog(_BillRow bill) async {
+    final swapped = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _SwapPaymentMethodDialog(bill: bill),
+    );
 
+    if (swapped == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Payment method swapped successfully for ${bill.billNumber}'),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.primaryGreen,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      _loadTodayBills();
+    }
+  }
 
   Future<void> _openEditParcelDialog(_BillRow bill) async {
     final updated = await showDialog<bool>(
@@ -591,7 +656,58 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
                               ),
                             ),
                           ),
-                          // EDITED badge for parcel orders that were modified
+                          // Payment Method Badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: bill.primaryPaymentMethod == 'cash'
+                                  ? const Color(0xFFE8F5E9)
+                                  : bill.primaryPaymentMethod == 'upi'
+                                      ? const Color(0xFFEDE9FE)
+                                      : const Color(0xFFFFF7ED),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: bill.primaryPaymentMethod == 'cash'
+                                    ? const Color(0xFF81C784)
+                                    : bill.primaryPaymentMethod == 'upi'
+                                        ? const Color(0xFFA78BFA)
+                                        : const Color(0xFFFDBA74),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  bill.primaryPaymentMethod == 'cash'
+                                      ? Icons.money_rounded
+                                      : bill.primaryPaymentMethod == 'upi'
+                                          ? Icons.qr_code_rounded
+                                          : Icons.call_split_rounded,
+                                  size: 11,
+                                  color: bill.primaryPaymentMethod == 'cash'
+                                      ? const Color(0xFF2E7D32)
+                                      : bill.primaryPaymentMethod == 'upi'
+                                          ? const Color(0xFF6D28D9)
+                                          : const Color(0xFFC2410C),
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  bill.paymentSummary,
+                                  style: TextStyle(
+                                    color: bill.primaryPaymentMethod == 'cash'
+                                        ? const Color(0xFF2E7D32)
+                                        : bill.primaryPaymentMethod == 'upi'
+                                            ? const Color(0xFF6D28D9)
+                                            : const Color(0xFFC2410C),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // EDITED badge for orders that were modified or payment swapped
                           if (bill.isEdited)
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -727,28 +843,47 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
               ),
             ],
 
-            // Action Row: Edit (Parcel only)
-            if (bill.orderType == 'takeaway' && !isVoided) ...[
+            // Action Row: Swap Payment (All active paid bills) & Edit Order (Parcel only)
+            if (!isVoided && isPaid) ...[
               const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: () => _openEditParcelDialog(bill),
-                    icon: const Icon(Icons.edit_rounded, size: 14, color: AppColors.primaryGreen),
+                    onPressed: () => _openSwapPaymentDialog(bill),
+                    icon: const Icon(Icons.swap_horiz_rounded, size: 15, color: Color(0xFF1D4ED8)),
                     label: const Text(
-                      'Edit Order',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryGreen),
+                      'Swap Payment',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)),
                     ),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFF86EFAC)),
-                      backgroundColor: const Color(0xFFF0FDF4),
+                      side: const BorderSide(color: Color(0xFF93C5FD)),
+                      backgroundColor: const Color(0xFFEFF6FF),
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                   ),
+                  if (bill.orderType == 'takeaway') ...[
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => _openEditParcelDialog(bill),
+                      icon: const Icon(Icons.edit_rounded, size: 14, color: AppColors.primaryGreen),
+                      label: const Text(
+                        'Edit Order',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryGreen),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Color(0xFF86EFAC)),
+                        backgroundColor: const Color(0xFFF0FDF4),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -1391,6 +1526,455 @@ class _ReplaceItemModalState extends State<_ReplaceItemModal> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Dialog for swapping payment method on same-day settled bills (Cash <-> UPI <-> Split).
+class _SwapPaymentMethodDialog extends StatefulWidget {
+  final _BillRow bill;
+
+  const _SwapPaymentMethodDialog({required this.bill});
+
+  @override
+  State<_SwapPaymentMethodDialog> createState() => _SwapPaymentMethodDialogState();
+}
+
+class _SwapPaymentMethodDialogState extends State<_SwapPaymentMethodDialog> {
+  late String _selectedMode;
+  late TextEditingController _cashAmountController;
+  late TextEditingController _upiAmountController;
+  late TextEditingController _reasonController;
+  late TextEditingController _upiRefController;
+
+  bool _isSubmitting = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    final currentMethod = widget.bill.primaryPaymentMethod;
+    // Suggest the other method as default for convenient 1-tap swap
+    if (currentMethod == 'cash') {
+      _selectedMode = 'upi';
+    } else if (currentMethod == 'upi') {
+      _selectedMode = 'cash';
+    } else {
+      _selectedMode = 'split';
+    }
+
+    final halfAmount = (widget.bill.finalAmount / 2).roundToDouble();
+    final remAmount = widget.bill.finalAmount - halfAmount;
+    _cashAmountController = TextEditingController(text: halfAmount.toStringAsFixed(0));
+    _upiAmountController = TextEditingController(text: remAmount.toStringAsFixed(0));
+    _reasonController = TextEditingController(text: 'Payment method swapped by cashier');
+    _upiRefController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _cashAmountController.dispose();
+    _upiAmountController.dispose();
+    _reasonController.dispose();
+    _upiRefController.dispose();
+    super.dispose();
+  }
+
+  double get _splitCashAmount => double.tryParse(_cashAmountController.text.trim()) ?? 0.0;
+  double get _splitUpiAmount => double.tryParse(_upiAmountController.text.trim()) ?? 0.0;
+
+  void _onCashAmountChanged(String val) {
+    final cash = double.tryParse(val.trim()) ?? 0.0;
+    final diff = widget.bill.finalAmount - cash;
+    if (diff >= 0) {
+      _upiAmountController.text = diff.toStringAsFixed(0);
+    }
+    setState(() {});
+  }
+
+  void _onUpiAmountChanged(String val) {
+    final upi = double.tryParse(val.trim()) ?? 0.0;
+    final diff = widget.bill.finalAmount - upi;
+    if (diff >= 0) {
+      _cashAmountController.text = diff.toStringAsFixed(0);
+    }
+    setState(() {});
+  }
+
+  Future<void> _handleSwap() async {
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final List<Map<String, dynamic>> newPayments = [];
+
+      if (_selectedMode == 'cash') {
+        newPayments.add({
+          'method': 'cash',
+          'amount': widget.bill.finalAmount,
+          'cash_tendered': widget.bill.finalAmount,
+          'status': 'completed',
+        });
+      } else if (_selectedMode == 'upi') {
+        newPayments.add({
+          'method': 'upi',
+          'amount': widget.bill.finalAmount,
+          'transaction_reference': _upiRefController.text.trim().isNotEmpty
+              ? _upiRefController.text.trim()
+              : null,
+          'status': 'completed',
+        });
+      } else {
+        // Split mode
+        final cash = _splitCashAmount;
+        final upi = _splitUpiAmount;
+        final total = cash + upi;
+
+        if ((total - widget.bill.finalAmount).abs() > 0.01) {
+          throw Exception(
+            'Split total (₹${total.toStringAsFixed(0)}) must equal bill amount (₹${widget.bill.finalAmount.toStringAsFixed(0)})',
+          );
+        }
+
+        if (cash > 0) {
+          newPayments.add({
+            'method': 'cash',
+            'amount': cash,
+            'cash_tendered': cash,
+            'status': 'completed',
+          });
+        }
+        if (upi > 0) {
+          newPayments.add({
+            'method': 'upi',
+            'amount': upi,
+            'transaction_reference': _upiRefController.text.trim().isNotEmpty
+                ? _upiRefController.text.trim()
+                : null,
+            'status': 'completed',
+          });
+        }
+      }
+
+      final repo = BillingRepository();
+      await repo.swapBillPaymentMethod(
+        billId: widget.bill.id,
+        payments: newPayments,
+        reason: _reasonController.text.trim().isNotEmpty
+            ? _reasonController.text.trim()
+            : 'Payment method swapped by cashier',
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceAll('Exception: ', '').replaceAll('RepositoryFailureException: ', '');
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = NumberFormat.currency(symbol: '₹', decimalDigits: 0, locale: 'en_IN');
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+      actionsPadding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.swap_horiz_rounded, color: Color(0xFF1D4ED8), size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Swap Payment Method',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                ),
+                Text(
+                  'Bill: ${widget.bill.billNumber}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Bill summary banner
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('CURRENT METHOD', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.bill.paymentSummary,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      ),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      const Text('BILL AMOUNT (LOCKED)', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      const SizedBox(height: 2),
+                      Text(
+                        fmt.format(widget.bill.finalAmount),
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1B4332)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            const Text(
+              'Select New Payment Method',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 8),
+
+            // Mode Selection Pills
+            Row(
+              children: [
+                _buildModeTile('cash', '💵 Cash', const Color(0xFF16A34A)),
+                const SizedBox(width: 8),
+                _buildModeTile('upi', '📱 UPI', const Color(0xFF7C3AED)),
+                const SizedBox(width: 8),
+                _buildModeTile('split', '⚡ Split', const Color(0xFFEA580C)),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Split Mode Specific Inputs
+            if (_selectedMode == 'split') ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFFED7AA)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.call_split_rounded, size: 14, color: Color(0xFFC2410C)),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'Split Tender Breakdown',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFC2410C)),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'Total: ₹${(_splitCashAmount + _splitUpiAmount).toStringAsFixed(0)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: ((_splitCashAmount + _splitUpiAmount) == widget.bill.finalAmount)
+                                ? const Color(0xFF16A34A)
+                                : const Color(0xFFDC2626),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Cash (₹)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                              const SizedBox(height: 4),
+                              TextField(
+                                controller: _cashAmountController,
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                  fillColor: Colors.white,
+                                  filled: true,
+                                ),
+                                onChanged: _onCashAmountChanged,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('UPI (₹)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                              const SizedBox(height: 4),
+                              TextField(
+                                controller: _upiAmountController,
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                  fillColor: Colors.white,
+                                  filled: true,
+                                ),
+                                onChanged: _onUpiAmountChanged,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // UPI Reference field (optional)
+            if (_selectedMode == 'upi' || _selectedMode == 'split') ...[
+              TextField(
+                controller: _upiRefController,
+                decoration: InputDecoration(
+                  labelText: 'UPI Ref / Txn ID (Optional)',
+                  labelStyle: const TextStyle(fontSize: 12),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  prefixIcon: const Icon(Icons.receipt_outlined, size: 16),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Reason / Audit Note
+            TextField(
+              controller: _reasonController,
+              decoration: InputDecoration(
+                labelText: 'Audit Reason',
+                labelStyle: const TextStyle(fontSize: 12),
+                hintText: 'e.g. Cashier selected UPI mistakenly instead of Cash',
+                hintStyle: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                prefixIcon: const Icon(Icons.note_alt_outlined, size: 16),
+              ),
+            ),
+
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFF87171)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, size: 16, color: Color(0xFFDC2626)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: const TextStyle(fontSize: 11, color: Color(0xFFDC2626)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+        ),
+        ElevatedButton(
+          onPressed: _isSubmitting ? null : _handleSwap,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF1D4ED8),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          child: _isSubmitting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Confirm Swap', style: TextStyle(fontWeight: FontWeight.bold)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildModeTile(String mode, String label, Color accentColor) {
+    final isSelected = _selectedMode == mode;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _selectedMode = mode),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? accentColor.withOpacity(0.1) : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected ? accentColor : Colors.grey.shade300,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                color: isSelected ? accentColor : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -1847,7 +1847,34 @@ class _AdminReportsViewState extends ConsumerState<AdminReportsView> {
               return DataRow(
                 cells: [
                   DataCell(Text(dtStr)),
-                  DataCell(Text(r['bill_number'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold))),
+                  DataCell(
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(r['bill_number'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        if (r['is_edited'] == true || (r['notes']?.toString().contains('[EDITED]') ?? false)) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF3C7),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: const Color(0xFFF59E0B)),
+                            ),
+                            child: const Text(
+                              'EDITED',
+                              style: TextStyle(
+                                color: Color(0xFFB45309),
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                   DataCell(Text((r['order_type'] ?? '').toString().toUpperCase())),
                   DataCell(Text(r['table_number'] ?? '-')),
                   DataCell(Text(ReportExportService.formatCurrency(r['discount_amount']))),

@@ -658,12 +658,37 @@ class AdminDashboardView extends ConsumerWidget {
                     backgroundColor: AppColors.primaryLight,
                     child: const Icon(Icons.receipt, color: AppColors.primaryGreen, size: 16),
                   ),
-                  title: Text(
-                    billNo.toString(),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  title: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        billNo.toString(),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      if (bill['is_edited'] == true || (bill['notes']?.toString().contains('[EDITED]') ?? false)) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFEF3C7),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFFF59E0B)),
+                          ),
+                          child: const Text(
+                            'EDITED',
+                            style: TextStyle(
+                              color: Color(0xFFB45309),
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   subtitle: Text(
-                    '$customer • $timeStr',
+                    '$customer • ${(bill['payment_method'] ?? 'cash').toString().toUpperCase()} • $timeStr',
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                   ),
                   trailing: Text(
