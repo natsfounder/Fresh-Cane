@@ -88,6 +88,7 @@ class AdminState {
   final List<Map<String, dynamic>> categories;
   final List<Map<String, dynamic>> menuItems;
   final List<Map<String, dynamic>> addons;
+  final List<Map<String, dynamic>> combos;
   final List<Map<String, dynamic>> offers;
 
   // Operations & Master Data
@@ -126,6 +127,7 @@ class AdminState {
     this.categories = const [],
     this.menuItems = const [],
     this.addons = const [],
+    this.combos = const [],
     this.offers = const [],
     this.isLoadingTables = false,
     this.tables = const [],
@@ -177,6 +179,7 @@ class AdminState {
     List<Map<String, dynamic>>? categories,
     List<Map<String, dynamic>>? menuItems,
     List<Map<String, dynamic>>? addons,
+    List<Map<String, dynamic>>? combos,
     List<Map<String, dynamic>>? offers,
     bool? isLoadingTables,
     List<Map<String, dynamic>>? tables,
@@ -220,6 +223,7 @@ class AdminState {
       categories: categories ?? this.categories,
       menuItems: menuItems ?? this.menuItems,
       addons: addons ?? this.addons,
+      combos: combos ?? this.combos,
       offers: offers ?? this.offers,
       isLoadingTables: isLoadingTables ?? this.isLoadingTables,
       tables: tables ?? this.tables,

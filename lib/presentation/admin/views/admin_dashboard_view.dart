@@ -500,7 +500,7 @@ class AdminDashboardView extends ConsumerWidget {
   Widget _buildPaymentBreakdownCard(List<Map<String, dynamic>> payments) {
     final totalAmount = payments.fold<double>(
       0.0,
-      (sum, p) => sum + ((p['amount'] as num?)?.toDouble() ?? 0.0),
+      (sum, p) => sum + (((p['total_amount'] ?? p['amount']) as num?)?.toDouble() ?? 0.0),
     );
 
     return Container(
@@ -533,9 +533,9 @@ class AdminDashboardView extends ConsumerWidget {
             )
           else
             ...payments.map((p) {
-              final method = (p['method'] ?? 'cash').toString().toUpperCase();
-              final amount = (p['amount'] as num?)?.toDouble() ?? 0.0;
-              final count = (p['count'] as num?)?.toInt() ?? 0;
+              final method = (p['payment_method'] ?? p['method'] ?? 'cash').toString().toUpperCase();
+              final amount = ((p['total_amount'] ?? p['amount']) as num?)?.toDouble() ?? 0.0;
+              final count = ((p['transaction_count'] ?? p['count']) as num?)?.toInt() ?? 0;
               final pct = totalAmount > 0 ? (amount / totalAmount) : 0.0;
 
               return Padding(

@@ -401,6 +401,7 @@ class AdminNotifier extends Notifier<AdminState> {
       final categories = await _repository.fetchCategories();
       final menuItems = await _repository.fetchMenuItems();
       final addons = await _repository.fetchAddons();
+      final combos = await _repository.fetchCombos();
       final offers = await _repository.fetchOffers();
 
       state = state.copyWith(
@@ -408,6 +409,7 @@ class AdminNotifier extends Notifier<AdminState> {
         categories: categories,
         menuItems: menuItems,
         addons: addons,
+        combos: combos,
         offers: offers,
       );
     } catch (e) {
@@ -603,6 +605,52 @@ class AdminNotifier extends Notifier<AdminState> {
       await loadMenuData();
     } catch (e) {
       state = state.copyWith(errorMessage: 'Failed to delete offer: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // COMBOS
+  // ---------------------------------------------------------------------------
+
+  Future<void> saveCombo({
+    String? id,
+    required String name,
+    required double price,
+    bool isAvailable = true,
+    bool isActive = true,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    try {
+      await _repository.saveCombo(
+        id: id,
+        name: name,
+        price: price,
+        isAvailable: isAvailable,
+        isActive: isActive,
+        items: items,
+      );
+      await loadMenuData();
+    } catch (e) {
+      state = state.copyWith(errorMessage: 'Failed to save combo: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> toggleComboAvailability(String id, bool isAvailable) async {
+    try {
+      await _repository.toggleComboAvailability(id, isAvailable);
+      await loadMenuData();
+    } catch (e) {
+      state = state.copyWith(errorMessage: 'Failed to update combo availability: $e');
+    }
+  }
+
+  Future<void> deleteCombo(String id) async {
+    try {
+      await _repository.deleteCombo(id);
+      await loadMenuData();
+    } catch (e) {
+      state = state.copyWith(errorMessage: 'Failed to delete combo: $e');
     }
   }
 

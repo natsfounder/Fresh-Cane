@@ -365,6 +365,77 @@ class AdminRepository {
   }
 
   // ---------------------------------------------------------------------------
+  // COMBOS MANAGEMENT
+  // ---------------------------------------------------------------------------
+
+  Future<List<Map<String, dynamic>>> fetchCombos() async {
+    try {
+      final response = await _client.rpc('fetch_combos_with_items');
+      if (response is List) {
+        return List<Map<String, dynamic>>.from(
+          response.map((item) => Map<String, dynamic>.from(item as Map)),
+        );
+      }
+      return [];
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  Future<void> saveCombo({
+    String? id,
+    required String name,
+    required double price,
+    bool isAvailable = true,
+    bool isActive = true,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    try {
+      await _client.rpc(
+        'save_combo',
+        params: {
+          'p_id': id,
+          'p_name': name.trim(),
+          'p_price': price,
+          'p_is_available': isAvailable,
+          'p_is_active': isActive,
+          'p_items': items,
+        },
+      );
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  Future<void> deleteCombo(String id) async {
+    try {
+      await _client.rpc('delete_combo', params: {'p_id': id});
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  Future<void> toggleComboAvailability(String id, bool isAvailable) async {
+    try {
+      final combos = await fetchCombos();
+      final target = combos.firstWhere((c) => c['id'] == id, orElse: () => {});
+      if (target.isEmpty) return;
+
+      final items = (target['items'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      await saveCombo(
+        id: id,
+        name: target['name'] ?? '',
+        price: (target['price'] as num?)?.toDouble() ?? 0.0,
+        isAvailable: isAvailable,
+        isActive: target['is_active'] ?? true,
+        items: items,
+      );
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // OFFERS / PROMOTIONS MANAGEMENT
   // ---------------------------------------------------------------------------
 
