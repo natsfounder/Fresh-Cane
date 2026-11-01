@@ -634,7 +634,25 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
 
   Widget _buildReviewBottomSheet(BuildContext bCtx) {
     final screenH = MediaQuery.of(bCtx).size.height;
-    final keyboardH = MediaQuery.of(bCtx).viewInsets.bottom;
+
+    /// Helper: dismiss the keyboard safely before popping the sheet.
+    void dismissAndPop([Object? result]) {
+      FocusScope.of(bCtx).unfocus();
+      // Small post-frame delay so the keyboard starts animating away
+      // before Navigator.pop fires — prevents the layout deadlock that
+      // caused the full-app freeze.
+      Future.microtask(() {
+        if (Navigator.of(bCtx).canPop()) {
+          Navigator.of(bCtx).pop(result);
+        }
+      });
+    }
+
+    return StatefulBuilder(
+      builder: (sbCtx, setSheetState) {
+        // Read keyboard insets *inside* the builder so the sheet
+        // padding updates reactively whenever the keyboard shows/hides.
+        final keyboardH = MediaQuery.of(sbCtx).viewInsets.bottom;
 
     return Container(
       constraints: BoxConstraints(maxHeight: screenH * 0.90),
@@ -680,7 +698,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.close_rounded, color: Colors.grey),
-                      onPressed: () => Navigator.pop(bCtx, false),
+                      onPressed: () => dismissAndPop(null),
                     ),
                   ],
                 ),
@@ -815,7 +833,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
                           ),
                           onPressed: () {
                             if (!_customerFormKey.currentState!.validate()) return;
-                            Navigator.pop(bCtx, ParcelCheckoutAction.payLater);
+                            dismissAndPop(ParcelCheckoutAction.payLater);
                           },
                           icon: const Icon(Icons.hourglass_top_rounded, size: 18),
                           label: const Column(
@@ -851,7 +869,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
                           ),
                           onPressed: () {
                             if (!_customerFormKey.currentState!.validate()) return;
-                            Navigator.pop(bCtx, ParcelCheckoutAction.payNow);
+                            dismissAndPop(ParcelCheckoutAction.payNow);
                           },
                           icon: const Icon(Icons.flash_on_rounded, size: 18),
                           label: const Column(
@@ -871,14 +889,16 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+                   ],
+                 ),
+               ],
+             ),
+           ),
+         ),
+       ),
+     );
+      }, // end StatefulBuilder builder
+    ); // end StatefulBuilder
   }
 
   @override
