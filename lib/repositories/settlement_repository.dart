@@ -19,24 +19,10 @@ class SettlementRepository {
       final startOfDay = DateTime(targetDate.year, targetDate.month, targetDate.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      // 1. Fetch completed payments (sales)
-      final paymentsResponse = await _client
-          .from('payments')
-          .select('id, amount, payment_method, status, transaction_reference, created_at, bills(bill_number)')
-          .eq('status', 'completed')
-          .order('created_at', ascending: true);
-
-      // 2. Fetch completed expenses
-      final expensesResponse = await _client
-          .from('expense_transactions')
-          .select('id, expense_name_snapshot, amount, payment_method, status, notes, created_at')
-          .neq('status', 'voided')
-          .order('created_at', ascending: true);
-
       final dateStr =
           '${targetDate.year.toString().padLeft(4, '0')}-${targetDate.month.toString().padLeft(2, '0')}-${targetDate.day.toString().padLeft(2, '0')}';
 
-      // 3. Query settlement overrides up to targetDate (for baseline carry-forward & today's overrides)
+      // 1. Query settlement overrides FIRST to determine accumulatorStart for date-filtered queries
       List<dynamic> overridesList = const [];
       try {
         overridesList = await _client
@@ -95,6 +81,44 @@ class SettlementRepository {
           openingUpi = (latestPrior['opening_upi'] as num?)?.toDouble() ?? 0.0;
           accumulatorStart = priorLocalDay;
         }
+      }
+
+      // 2. Fetch completed payments (sales) — date-filtered to avoid Supabase's 1000-row cap
+      List<dynamic> paymentsResponse;
+      if (accumulatorStart != null) {
+        paymentsResponse = await _client
+            .from('payments')
+            .select('id, amount, payment_method, status, transaction_reference, created_at, bills(bill_number)')
+            .eq('status', 'completed')
+            .gte('created_at', accumulatorStart.toUtc().toIso8601String())
+            .lt('created_at', endOfDay.toUtc().toIso8601String())
+            .order('created_at', ascending: true);
+      } else {
+        paymentsResponse = await _client
+            .from('payments')
+            .select('id, amount, payment_method, status, transaction_reference, created_at, bills(bill_number)')
+            .eq('status', 'completed')
+            .lt('created_at', endOfDay.toUtc().toIso8601String())
+            .order('created_at', ascending: true);
+      }
+
+      // 3. Fetch non-voided expenses — date-filtered to match payments window
+      List<dynamic> expensesResponse;
+      if (accumulatorStart != null) {
+        expensesResponse = await _client
+            .from('expense_transactions')
+            .select('id, expense_name_snapshot, amount, payment_method, status, notes, created_at')
+            .neq('status', 'voided')
+            .gte('created_at', accumulatorStart.toUtc().toIso8601String())
+            .lt('created_at', endOfDay.toUtc().toIso8601String())
+            .order('created_at', ascending: true);
+      } else {
+        expensesResponse = await _client
+            .from('expense_transactions')
+            .select('id, expense_name_snapshot, amount, payment_method, status, notes, created_at')
+            .neq('status', 'voided')
+            .lt('created_at', endOfDay.toUtc().toIso8601String())
+            .order('created_at', ascending: true);
       }
 
       double salesCash = 0.0;
