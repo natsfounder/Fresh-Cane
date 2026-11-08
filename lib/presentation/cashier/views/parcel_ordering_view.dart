@@ -16,6 +16,7 @@ import '../../server/widgets/item_customization_modal.dart';
 import '../widgets/edit_parcel_order_dialog.dart';
 import '../widgets/payment_dialog.dart';
 import '../widgets/receipt_dialog.dart';
+import '../../../services/receipt_print_service.dart';
 import '../../common/product_image_widget.dart';
 
 /// Checkout action chosen in the Parcel Order review sheet.
@@ -486,6 +487,30 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
           ),
         );
       }
+    }
+  }
+
+  Future<void> _handlePrintPendingBill(_PendingParcelBill pendingBill) async {
+    final receiptItems = pendingBill.items.map((it) => ReceiptItem(
+      name: it.name,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      totalPrice: it.totalPrice,
+    )).toList();
+
+    final success = await ReceiptPrintService.printPreBill(
+      bill: pendingBill.billModel,
+      tableName: 'Parcel / Takeaway',
+      items: receiptItems,
+    );
+
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Print preview cancelled or closed.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -1592,6 +1617,23 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
                   ),
                   onPressed: () => _handleCancelPendingOrder(bill),
                   child: const Text('Cancel', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 6),
+
+                // Print Bill button
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryGreen,
+                    side: const BorderSide(color: Color(0xFF86EFAC)),
+                    backgroundColor: const Color(0xFFF0FDF4),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => _handlePrintPendingBill(bill),
+                  icon: const Icon(Icons.print_rounded, size: 14),
+                  label: const Text('Print Bill', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(width: 6),
 

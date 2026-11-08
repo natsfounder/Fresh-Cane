@@ -46,6 +46,7 @@ class ReceiptPrintData {
   final double? changeReturned;
   final String? transactionReference;
   final bool isReprint;
+  final bool isPreBill;
 
   const ReceiptPrintData({
     required this.billNumber,
@@ -70,10 +71,11 @@ class ReceiptPrintData {
     this.changeReturned,
     this.transactionReference,
     this.isReprint = false,
+    this.isPreBill = false,
   });
 }
 
-/// Service responsible for rendering and printing thermal POS receipts.
+/// Service responsible for rendering and printing thermal POS receipts and pre-bills.
 class ReceiptPrintService {
   /// Fetch order items for a given order ID from Supabase.
   static Future<List<ReceiptItem>> fetchItemsForOrder(String orderId) async {
@@ -146,7 +148,9 @@ class ReceiptPrintService {
     final bool hasRoundOff = data.roundOff.abs() >= 0.01;
 
     String receiptTitle;
-    if (data.isReprint) {
+    if (data.isPreBill) {
+      receiptTitle = hasTax ? 'BILL / TAX INVOICE' : 'BILL';
+    } else if (data.isReprint) {
       receiptTitle = 'DUPLICATE RECEIPT';
     } else if (hasTax) {
       receiptTitle = 'TAX INVOICE';
@@ -330,7 +334,7 @@ class ReceiptPrintService {
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Text(
-                      'TOTAL PAID:',
+                      data.isPreBill ? 'TOTAL AMOUNT DUE:' : 'TOTAL PAID:',
                       style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
                     ),
                     pw.Text(
@@ -344,33 +348,53 @@ class ReceiptPrintService {
               pw.SizedBox(height: 3),
 
               // --- Settlement Details ---
-              _buildSummaryRow('Payment Method:', data.paymentMethod.toUpperCase(), isBold: true),
-              if (data.paymentMethod.toLowerCase() == 'cash' && data.cashTendered != null && data.cashTendered! > 0) ...[
-                _buildSummaryRow('Cash Tendered:', formatAmt(data.cashTendered!)),
-                _buildSummaryRow('Change Returned:', formatAmt(data.changeReturned ?? 0.0)),
+              if (data.isPreBill) ...[
+                _buildSummaryRow('Status:', 'PAYMENT PENDING', isBold: true),
+              ] else ...[
+                _buildSummaryRow('Payment Method:', data.paymentMethod.toUpperCase(), isBold: true),
+                if (data.paymentMethod.toLowerCase() == 'cash' && data.cashTendered != null && data.cashTendered! > 0) ...[
+                  _buildSummaryRow('Cash Tendered:', formatAmt(data.cashTendered!)),
+                  _buildSummaryRow('Change Returned:', formatAmt(data.changeReturned ?? 0.0)),
+                ],
+                if (data.transactionReference != null && data.transactionReference!.trim().isNotEmpty)
+                  _buildSummaryRow('UPI/Txn Ref:', data.transactionReference!.trim()),
+                _buildSummaryRow('Payment Status:', 'PAID', isBold: true),
               ],
-              if (data.transactionReference != null && data.transactionReference!.trim().isNotEmpty)
-                _buildSummaryRow('UPI/Txn Ref:', data.transactionReference!.trim()),
-              _buildSummaryRow('Payment Status:', 'PAID', isBold: true),
 
               pw.SizedBox(height: 6),
               _buildDashedLine(),
               pw.SizedBox(height: 6),
 
               // --- Footer ---
-              pw.Center(
-                child: pw.Text(
-                  'Thank You for Visiting!',
-                  style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+              if (data.isPreBill) ...[
+                pw.Center(
+                  child: pw.Text(
+                    'Please pay at the cashier counter',
+                    style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+                  ),
                 ),
-              ),
-              pw.SizedBox(height: 2),
-              pw.Center(
-                child: pw.Text(
-                  'Have a Sweet & Refreshing Day!',
-                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+                pw.SizedBox(height: 2),
+                pw.Center(
+                  child: pw.Text(
+                    'Fresh Cane - Fresh & Pure',
+                    style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+                  ),
                 ),
-              ),
+              ] else ...[
+                pw.Center(
+                  child: pw.Text(
+                    'Thank You for Visiting!',
+                    style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+                  ),
+                ),
+                pw.SizedBox(height: 2),
+                pw.Center(
+                  child: pw.Text(
+                    'Have a Sweet & Refreshing Day!',
+                    style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+                  ),
+                ),
+              ],
               pw.SizedBox(height: 4),
             ],
           );
@@ -424,6 +448,7 @@ class ReceiptPrintService {
         changeReturned: payment.changeReturned,
         transactionReference: payment.transactionReference,
         isReprint: isReprint,
+        isPreBill: false,
       );
 
       final pdfBytes = await generateReceiptPdf(data);
@@ -434,6 +459,59 @@ class ReceiptPrintService {
       );
     } catch (e, stack) {
       debugPrint('[ReceiptPrintService] Error executing print: $e\n$stack');
+      return false;
+    }
+  }
+
+  /// Triggers standard printing dialog / layout for an unpaid Bill (Pre-Bill).
+  static Future<bool> printPreBill({
+    required Bill bill,
+    String? tableName,
+    String? cashierName,
+    List<ReceiptItem>? items,
+  }) async {
+    try {
+      List<ReceiptItem> receiptItems = items ?? [];
+      if (receiptItems.isEmpty && bill.orderId.isNotEmpty) {
+        receiptItems = await fetchItemsForOrder(bill.orderId);
+      }
+
+      String orderTypeLabel = tableName ?? 'Dine-In';
+      if (tableName == null || tableName.isEmpty) {
+        orderTypeLabel = 'Dine-In';
+      }
+
+      final data = ReceiptPrintData(
+        billNumber: bill.billNumber,
+        dateTime: bill.createdAt,
+        storeName: bill.storeNameSnapshot.isNotEmpty ? bill.storeNameSnapshot : 'Fresh Cane',
+        storeAddress: bill.storeAddressSnapshot,
+        storeGstin: bill.storeGstinSnapshot,
+        orderType: orderTypeLabel,
+        customerName: bill.customerNameSnapshot,
+        customerPhone: bill.customerPhoneSnapshot,
+        cashierName: cashierName ?? 'Cashier',
+        items: receiptItems,
+        subtotal: bill.subtotalAmount,
+        discountType: bill.discountType,
+        discountAmount: bill.discountAmount,
+        taxRate: bill.taxRateSnapshot,
+        taxAmount: bill.taxAmount,
+        roundOff: bill.roundOffAmount,
+        finalAmount: bill.finalAmount,
+        paymentMethod: 'Pending',
+        isReprint: false,
+        isPreBill: true,
+      );
+
+      final pdfBytes = await generateReceiptPdf(data);
+
+      return await Printing.layoutPdf(
+        name: 'Bill_${bill.billNumber}',
+        onLayout: (PdfPageFormat format) async => pdfBytes,
+      );
+    } catch (e, stack) {
+      debugPrint('[ReceiptPrintService] Error executing pre-bill print: $e\n$stack');
       return false;
     }
   }
@@ -501,4 +579,3 @@ class ReceiptPrintService {
     );
   }
 }
-
