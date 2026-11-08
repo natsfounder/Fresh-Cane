@@ -347,10 +347,8 @@ class ReceiptPrintService {
               _buildSolidLine(thickness: 1.2),
               pw.SizedBox(height: 3),
 
-              // --- Settlement Details ---
-              if (data.isPreBill) ...[
-                _buildSummaryRow('Status:', 'PAYMENT PENDING', isBold: true),
-              ] else ...[
+              // --- Settlement Details (No Status row) ---
+              if (!data.isPreBill) ...[
                 _buildSummaryRow('Payment Method:', data.paymentMethod.toUpperCase(), isBold: true),
                 if (data.paymentMethod.toLowerCase() == 'cash' && data.cashTendered != null && data.cashTendered! > 0) ...[
                   _buildSummaryRow('Cash Tendered:', formatAmt(data.cashTendered!)),
@@ -358,7 +356,6 @@ class ReceiptPrintService {
                 ],
                 if (data.transactionReference != null && data.transactionReference!.trim().isNotEmpty)
                   _buildSummaryRow('UPI/Txn Ref:', data.transactionReference!.trim()),
-                _buildSummaryRow('Payment Status:', 'PAID', isBold: true),
               ],
 
               pw.SizedBox(height: 6),
@@ -366,35 +363,13 @@ class ReceiptPrintService {
               pw.SizedBox(height: 6),
 
               // --- Footer ---
-              if (data.isPreBill) ...[
-                pw.Center(
-                  child: pw.Text(
-                    'Please pay at the cashier counter',
-                    style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-                  ),
+              pw.Center(
+                child: pw.Text(
+                  'Thank You! Visit Again',
+                  style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+                  textAlign: pw.TextAlign.center,
                 ),
-                pw.SizedBox(height: 2),
-                pw.Center(
-                  child: pw.Text(
-                    'Fresh Cane - Fresh & Pure',
-                    style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
-                  ),
-                ),
-              ] else ...[
-                pw.Center(
-                  child: pw.Text(
-                    'Thank You for Visiting!',
-                    style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-                  ),
-                ),
-                pw.SizedBox(height: 2),
-                pw.Center(
-                  child: pw.Text(
-                    'Have a Sweet & Refreshing Day!',
-                    style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
-                  ),
-                ),
-              ],
+              ),
               pw.SizedBox(height: 4),
             ],
           );
@@ -403,6 +378,24 @@ class ReceiptPrintService {
     );
 
     return pdf.save();
+  }
+
+  static Future<String?> _resolveStoreAddress(String? snapshotAddress) async {
+    if (snapshotAddress != null && snapshotAddress.trim().isNotEmpty) {
+      return snapshotAddress.trim();
+    }
+    try {
+      final res = await SupabaseService.client
+          .from('store_settings')
+          .select('address')
+          .limit(1)
+          .maybeSingle();
+      if (res != null && res['address'] != null) {
+        final addr = res['address'].toString().trim();
+        if (addr.isNotEmpty) return addr;
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// Triggers standard printing dialog / layout for a completed Bill.
@@ -425,11 +418,13 @@ class ReceiptPrintService {
         orderTypeLabel = 'Dine-In';
       }
 
+      final storeAddress = await _resolveStoreAddress(bill.storeAddressSnapshot);
+
       final data = ReceiptPrintData(
         billNumber: bill.billNumber,
         dateTime: bill.createdAt,
         storeName: bill.storeNameSnapshot.isNotEmpty ? bill.storeNameSnapshot : 'Fresh Cane',
-        storeAddress: bill.storeAddressSnapshot,
+        storeAddress: storeAddress,
         storeGstin: bill.storeGstinSnapshot,
         orderType: orderTypeLabel,
         customerName: bill.customerNameSnapshot,
@@ -481,11 +476,13 @@ class ReceiptPrintService {
         orderTypeLabel = 'Dine-In';
       }
 
+      final storeAddress = await _resolveStoreAddress(bill.storeAddressSnapshot);
+
       final data = ReceiptPrintData(
         billNumber: bill.billNumber,
         dateTime: bill.createdAt,
         storeName: bill.storeNameSnapshot.isNotEmpty ? bill.storeNameSnapshot : 'Fresh Cane',
-        storeAddress: bill.storeAddressSnapshot,
+        storeAddress: storeAddress,
         storeGstin: bill.storeGstinSnapshot,
         orderType: orderTypeLabel,
         customerName: bill.customerNameSnapshot,
