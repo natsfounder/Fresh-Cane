@@ -328,14 +328,31 @@ class BluetoothPrinterService {
   }
 
   /// High-level printing flow:
-  /// 1. Verifies Bluetooth is on.
-  /// 2. If a saved printer MAC exists, attempts to connect.
-  /// 3. If no saved printer or connection fails, presents the [BluetoothDevicePickerSheet].
-  /// 4. Sends 2-inch ESC/POS bytes directly to printer.
+  /// 1. Requests Bluetooth permission (Android 12+).
+  /// 2. Verifies Bluetooth is on.
+  /// 3. If a saved printer MAC exists, attempts to connect.
+  /// 4. If no saved printer or connection fails, presents the [BluetoothDevicePickerSheet].
+  /// 5. Sends 2-inch ESC/POS bytes directly to printer.
   static Future<bool> printReceiptDirect({
     required BuildContext context,
     required ReceiptPrintData data,
   }) async {
+    // Step 1: Request Bluetooth permission first (Android 12+ requires runtime permission)
+    final permissionGranted = await checkPermission();
+    if (!permissionGranted) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Bluetooth permission denied. Please allow Bluetooth access in Settings.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return false;
+    }
+
+    // Step 2: Check if Bluetooth hardware is turned on
     final btEnabled = await isBluetoothEnabled();
     if (!btEnabled) {
       if (context.mounted) {
