@@ -151,14 +151,14 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                 style: AppTextStyles.h3.copyWith(color: AppColors.primaryDark),
                 textAlign: TextAlign.center,
               ),
-              if (bill.storeAddressSnapshot != null && bill.storeAddressSnapshot!.trim().isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(
-                  bill.storeAddressSnapshot!.trim(),
-                  style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
-                  textAlign: TextAlign.center,
-                ),
-              ],
+              const SizedBox(height: 2),
+              Text(
+                bill.storeAddressSnapshot != null && bill.storeAddressSnapshot!.trim().isNotEmpty
+                    ? bill.storeAddressSnapshot!.trim()
+                    : '138, Ummar Nagar, Kovai to Podanur Road, Podanur, Coimbatore - 641023',
+                style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
               if (bill.storeGstinSnapshot != null && bill.storeGstinSnapshot!.trim().isNotEmpty) ...[
                 const SizedBox(height: 2),
                 Text(
@@ -195,7 +195,7 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                       ),
                     const Divider(),
                     _buildRow(
-                      'TOTAL PAID',
+                      'TOTAL AMOUNT',
                       '₹${bill.finalAmount.toStringAsFixed(2)}',
                       isBold: true,
                       textColor: AppColors.primaryGreen,

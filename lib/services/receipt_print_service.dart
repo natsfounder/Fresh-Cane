@@ -177,16 +177,16 @@ class ReceiptPrintService {
                   textAlign: pw.TextAlign.center,
                 ),
               ),
-              if (data.storeAddress != null && data.storeAddress!.trim().isNotEmpty) ...[
-                pw.SizedBox(height: 2),
-                pw.Center(
-                  child: pw.Text(
-                    data.storeAddress!.trim(),
-                    style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
-                    textAlign: pw.TextAlign.center,
-                  ),
+              pw.SizedBox(height: 2),
+              pw.Center(
+                child: pw.Text(
+                  data.storeAddress != null && data.storeAddress!.trim().isNotEmpty
+                      ? data.storeAddress!.trim()
+                      : '138, Ummar Nagar, Kovai to Podanur Road,\nPodanur, Coimbatore, Tamil Nadu - 641023',
+                  style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.grey800),
+                  textAlign: pw.TextAlign.center,
                 ),
-              ],
+              ),
               if (hasGstin) ...[
                 pw.SizedBox(height: 2),
                 pw.Center(
@@ -334,7 +334,7 @@ class ReceiptPrintService {
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Text(
-                      'TOTAL PAID:',
+                      'TOTAL AMOUNT:',
                       style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
                     ),
                     pw.Text(
@@ -368,6 +368,9 @@ class ReceiptPrintService {
     return pdf.save();
   }
 
+  static const String defaultStoreAddress =
+      '138, Ummar Nagar, Kovai to Podanur Road, Podanur, Coimbatore, Tamil Nadu - 641023';
+
   static Future<String?> _resolveStoreAddress(String? snapshotAddress) async {
     if (snapshotAddress != null && snapshotAddress.trim().isNotEmpty) {
       return snapshotAddress.trim();
@@ -383,7 +386,7 @@ class ReceiptPrintService {
         if (addr.isNotEmpty) return addr;
       }
     } catch (_) {}
-    return null;
+    return defaultStoreAddress;
   }
 
   /// Triggers standard printing dialog / layout for a completed Bill.
