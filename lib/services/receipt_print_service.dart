@@ -334,7 +334,7 @@ class ReceiptPrintService {
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Text(
-                      data.isPreBill ? 'TOTAL AMOUNT DUE:' : 'TOTAL PAID:',
+                      'TOTAL PAID:',
                       style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
                     ),
                     pw.Text(
@@ -345,20 +345,8 @@ class ReceiptPrintService {
                 ),
               ),
               _buildSolidLine(thickness: 1.2),
-              pw.SizedBox(height: 3),
-
-              // --- Settlement Details (No Status row) ---
-              if (!data.isPreBill) ...[
-                _buildSummaryRow('Payment Method:', data.paymentMethod.toUpperCase(), isBold: true),
-                if (data.paymentMethod.toLowerCase() == 'cash' && data.cashTendered != null && data.cashTendered! > 0) ...[
-                  _buildSummaryRow('Cash Tendered:', formatAmt(data.cashTendered!)),
-                  _buildSummaryRow('Change Returned:', formatAmt(data.changeReturned ?? 0.0)),
-                ],
-                if (data.transactionReference != null && data.transactionReference!.trim().isNotEmpty)
-                  _buildSummaryRow('UPI/Txn Ref:', data.transactionReference!.trim()),
-              ],
-
               pw.SizedBox(height: 6),
+
               _buildDashedLine(),
               pw.SizedBox(height: 6),
 
