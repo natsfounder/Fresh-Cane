@@ -329,52 +329,41 @@ class BluetoothPrinterService {
 
   /// High-level printing flow:
   /// 1. Requests Bluetooth permission (Android 12+).
-  /// 2. Verifies Bluetooth is on.
-  /// 3. If a saved printer MAC exists, attempts to connect.
-  /// 4. If no saved printer or connection fails, presents the [BluetoothDevicePickerSheet].
-  /// 5. Sends 2-inch ESC/POS bytes directly to printer.
+  /// 2. If a saved printer MAC exists, attempts to auto-connect.
+  /// 3. If no saved printer or connection fails, presents the [BluetoothDevicePickerSheet].
+  /// 4. Sends 2-inch ESC/POS bytes directly to printer.
   static Future<bool> printReceiptDirect({
     required BuildContext context,
     required ReceiptPrintData data,
   }) async {
-    // Step 1: Request Bluetooth permission first (Android 12+ requires runtime permission)
-    final permissionGranted = await checkPermission();
-    if (!permissionGranted) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Bluetooth permission denied. Please allow Bluetooth access in Settings.'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 3),
-          ),
-        );
+    // Step 1: Request Bluetooth permission first (Android 12+ requires runtime permission).
+    // This triggers the system permission dialog if not yet granted.
+    try {
+      await checkPermission();
+    } catch (_) {
+      // Permission check itself may throw on some devices; continue anyway.
+    }
+
+    // Step 2: Try to auto-connect to saved printer
+    bool connected = false;
+    try {
+      connected = await isConnected();
+    } catch (_) {
+      connected = false;
+    }
+
+    if (!connected) {
+      final savedMac = await getSavedPrinterMac();
+      if (savedMac != null && savedMac.isNotEmpty) {
+        try {
+          connected = await connect(savedMac);
+        } catch (_) {
+          connected = false;
+        }
       }
-      return false;
     }
 
-    // Step 2: Check if Bluetooth hardware is turned on
-    final btEnabled = await isBluetoothEnabled();
-    if (!btEnabled) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please turn ON Bluetooth on your device to print.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      return false;
-    }
-
-    // Check if already connected
-    bool connected = await isConnected();
-    final savedMac = await getSavedPrinterMac();
-
-    if (!connected && savedMac != null && savedMac.isNotEmpty) {
-      // Try to connect to saved printer automatically
-      connected = await connect(savedMac);
-    }
-
+    // Step 3: If still not connected, show the device picker
     if (!connected) {
       // Need user to select a printer from paired devices
       if (!context.mounted) return false;
@@ -475,6 +464,9 @@ class _BluetoothDevicePickerSheetState extends State<BluetoothDevicePickerSheet>
 
   Future<void> _loadDevices() async {
     setState(() => _loading = true);
+    try {
+      await BluetoothPrinterService.checkPermission();
+    } catch (_) {}
     final devices = await BluetoothPrinterService.getPairedDevices();
     if (mounted) {
       setState(() {
