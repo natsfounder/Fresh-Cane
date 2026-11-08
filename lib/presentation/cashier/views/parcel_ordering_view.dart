@@ -499,6 +499,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
     )).toList();
 
     final success = await ReceiptPrintService.printPreBill(
+      context: context,
       bill: pendingBill.billModel,
       tableName: 'Parcel / Takeaway',
       items: receiptItems,

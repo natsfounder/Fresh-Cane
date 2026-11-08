@@ -57,6 +57,7 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
 
     try {
       final success = await ReceiptPrintService.printReceipt(
+        context: context,
         bill: widget.bill,
         payment: widget.payment,
         tableName: widget.tableName,

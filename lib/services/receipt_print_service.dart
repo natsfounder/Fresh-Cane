@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -6,6 +7,7 @@ import 'package:printing/printing.dart';
 import '../models/bill_model.dart';
 import '../models/payment_model.dart';
 import 'supabase_service.dart';
+import 'bluetooth_printer_service.dart';
 
 /// Single item line on a receipt.
 class ReceiptItem {
@@ -389,8 +391,22 @@ class ReceiptPrintService {
     return defaultStoreAddress;
   }
 
+  /// Directly sends a PDF document to the system print dialog.
+  static Future<bool> printViaSystemDialog({
+    required String docName,
+    required Uint8List pdfBytes,
+  }) async {
+    return await Printing.layoutPdf(
+      name: docName,
+      onLayout: (PdfPageFormat format) async => pdfBytes,
+    );
+  }
+
   /// Triggers standard printing dialog / layout for a completed Bill.
+  /// If [context] is provided, attempts direct 2-inch Bluetooth thermal printing
+  /// and shows printer picker if not yet configured.
   static Future<bool> printReceipt({
+    BuildContext? context,
     required Bill bill,
     required Payment payment,
     String? tableName,
@@ -437,11 +453,18 @@ class ReceiptPrintService {
         isPreBill: false,
       );
 
-      final pdfBytes = await generateReceiptPdf(data);
+      if (context != null) {
+        if (!context.mounted) return false;
+        return await BluetoothPrinterService.printReceiptDirect(
+          context: context,
+          data: data,
+        );
+      }
 
-      return await Printing.layoutPdf(
-        name: 'Receipt_${bill.billNumber}',
-        onLayout: (PdfPageFormat format) async => pdfBytes,
+      final pdfBytes = await generateReceiptPdf(data);
+      return await printViaSystemDialog(
+        docName: 'Receipt_${bill.billNumber}',
+        pdfBytes: pdfBytes,
       );
     } catch (e, stack) {
       debugPrint('[ReceiptPrintService] Error executing print: $e\n$stack');
@@ -450,7 +473,10 @@ class ReceiptPrintService {
   }
 
   /// Triggers standard printing dialog / layout for an unpaid Bill (Pre-Bill).
+  /// If [context] is provided, attempts direct 2-inch Bluetooth thermal printing
+  /// and shows printer picker if not yet configured.
   static Future<bool> printPreBill({
+    BuildContext? context,
     required Bill bill,
     String? tableName,
     String? cashierName,
@@ -492,11 +518,18 @@ class ReceiptPrintService {
         isPreBill: true,
       );
 
-      final pdfBytes = await generateReceiptPdf(data);
+      if (context != null) {
+        if (!context.mounted) return false;
+        return await BluetoothPrinterService.printReceiptDirect(
+          context: context,
+          data: data,
+        );
+      }
 
-      return await Printing.layoutPdf(
-        name: 'Bill_${bill.billNumber}',
-        onLayout: (PdfPageFormat format) async => pdfBytes,
+      final pdfBytes = await generateReceiptPdf(data);
+      return await printViaSystemDialog(
+        docName: 'Bill_${bill.billNumber}',
+        pdfBytes: pdfBytes,
       );
     } catch (e, stack) {
       debugPrint('[ReceiptPrintService] Error executing pre-bill print: $e\n$stack');

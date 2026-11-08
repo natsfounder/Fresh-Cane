@@ -1014,6 +1014,7 @@ class DineInBillingView extends ConsumerWidget {
                                                       ? null
                                                       : () async {
                                                           final success = await ReceiptPrintService.printPreBill(
+                                                            context: context,
                                                             bill: bill,
                                                             tableName: 'Table ${selectedSession.tableNumber}',
                                                           );
