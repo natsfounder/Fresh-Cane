@@ -377,6 +377,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
               context,
               bill: bill,
               payment: paymentObj,
+              tableName: 'Parcel / Takeaway',
               onFinish: () {
                 setState(() {
                   _cart.clear();
@@ -457,6 +458,7 @@ class _ParcelOrderingViewState extends ConsumerState<ParcelOrderingView> {
             context,
             bill: pendingBill.billModel,
             payment: paymentObj,
+            tableName: 'Parcel / Takeaway',
             onFinish: () {
               _loadPendingBills();
             },

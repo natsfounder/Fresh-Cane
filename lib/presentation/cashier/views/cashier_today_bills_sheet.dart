@@ -4,6 +4,8 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/date_time_utils.dart';
 import '../../../repositories/billing_repository.dart';
 import '../../../services/supabase_service.dart';
+import '../../../models/payment_model.dart';
+import '../../../services/receipt_print_service.dart';
 
 /// Representation of an individual item within a billed order.
 class _BilledItem {
@@ -223,6 +225,60 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
           _error = 'Failed to load bills: $e';
           _isLoading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _printBillReceipt(_BillRow bill) async {
+    try {
+      final billingRepo = BillingRepository();
+      final billModel = await billingRepo.fetchBillById(bill.id);
+
+      final firstPmt = bill.payments.isNotEmpty ? bill.payments.first : null;
+      final paymentObj = Payment(
+        id: firstPmt?['id'] as String? ?? 'pmt_${DateTime.now().millisecondsSinceEpoch}',
+        billId: bill.id,
+        paymentMethod: firstPmt?['payment_method'] as String? ?? 'cash',
+        amount: (firstPmt?['amount'] as num?)?.toDouble() ?? billModel.finalAmount,
+        cashTendered: (firstPmt?['cash_tendered'] as num?)?.toDouble(),
+        changeReturned: (firstPmt?['change_returned'] as num?)?.toDouble(),
+        transactionReference: firstPmt?['transaction_reference'] as String?,
+        receivedBy: 'cashier',
+        status: 'completed',
+        createdAt: bill.createdAt,
+      );
+
+      final receiptItems = bill.items.map((it) => ReceiptItem(
+        name: it.name,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        totalPrice: it.totalPrice,
+      )).toList();
+
+      final success = await ReceiptPrintService.printReceipt(
+        bill: billModel,
+        payment: paymentObj,
+        tableName: bill.orderType == 'takeaway' ? 'Parcel / Takeaway' : 'Dine-In',
+        items: receiptItems,
+        isReprint: true,
+      );
+
+      if (!success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Print preview cancelled or closed.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to print receipt: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
       }
     }
   }
@@ -843,12 +899,29 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
               ),
             ],
 
-            // Action Row: Swap Payment (All active paid bills) & Edit Order (Parcel only)
+            // Action Row: Print Receipt, Swap Payment, Edit Order (Parcel only)
             if (!isVoided && isPaid) ...[
               const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _printBillReceipt(bill),
+                    icon: const Icon(Icons.print_rounded, size: 14, color: AppColors.primaryGreen),
+                    label: const Text(
+                      'Print Receipt',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryGreen),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFF86EFAC)),
+                      backgroundColor: const Color(0xFFF0FDF4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   OutlinedButton.icon(
                     onPressed: () => _openSwapPaymentDialog(bill),
                     icon: const Icon(Icons.swap_horiz_rounded, size: 15, color: Color(0xFF1D4ED8)),

@@ -1038,6 +1038,7 @@ class DineInBillingView extends ConsumerWidget {
                                                             context,
                                                             bill: bill,
                                                             payment: paymentObj,
+                                                            tableName: 'Table $settledTableNumber',
                                                             onFinish: () {
                                                               final currentSession = ref.read(cashierProvider).selectedTableSession;
                                                               final customers = currentSession?.customers ?? [];
