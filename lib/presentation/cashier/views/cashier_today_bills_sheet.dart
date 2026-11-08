@@ -256,6 +256,7 @@ class _CashierTodayBillsSheetState extends State<CashierTodayBillsSheet> {
       )).toList();
 
       final success = await ReceiptPrintService.printReceipt(
+        context: context,
         bill: billModel,
         payment: paymentObj,
         tableName: bill.orderType == 'takeaway' ? 'Parcel / Takeaway' : 'Dine-In',
