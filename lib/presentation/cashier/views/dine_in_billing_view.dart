@@ -10,6 +10,7 @@ import '../../../state/cashier_state.dart';
 import '../widgets/bill_summary_dialog.dart';
 import '../widgets/payment_dialog.dart';
 import '../widgets/receipt_dialog.dart';
+import '../../../services/receipt_print_service.dart';
 
 /// View for Dine-In Table Billing, Payment Settlement, and Session Closure.
 class DineInBillingView extends ConsumerWidget {
@@ -1004,16 +1005,50 @@ class DineInBillingView extends ConsumerWidget {
                                               ],
                                             ),
                                           ),
-                                          SizedBox(
-                                            width: double.infinity,
-                                            child: ElevatedButton.icon(
-                                              onPressed: cashierState.isSubmitting
-                                                  ? null
-                                                  : () async {
-                                                      final payments = await PaymentDialog.show(
-                                                        context: context,
-                                                        bill: bill,
-                                                      );
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                flex: 2,
+                                                child: OutlinedButton.icon(
+                                                  onPressed: cashierState.isSubmitting
+                                                      ? null
+                                                      : () async {
+                                                          final success = await ReceiptPrintService.printPreBill(
+                                                            bill: bill,
+                                                            tableName: 'Table ${selectedSession.tableNumber}',
+                                                          );
+                                                          if (!success && context.mounted) {
+                                                            ScaffoldMessenger.of(context).showSnackBar(
+                                                              const SnackBar(
+                                                                content: Text('Print preview cancelled or closed.'),
+                                                                duration: Duration(seconds: 2),
+                                                              ),
+                                                            );
+                                                          }
+                                                        },
+                                                  icon: const Icon(Icons.print_rounded, size: 16),
+                                                  label: const Text('Print Bill'),
+                                                  style: OutlinedButton.styleFrom(
+                                                    foregroundColor: AppColors.primaryGreen,
+                                                    side: const BorderSide(color: AppColors.primaryGreen, width: 1.5),
+                                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius: BorderRadius.circular(10),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                flex: 3,
+                                                child: ElevatedButton.icon(
+                                                  onPressed: cashierState.isSubmitting
+                                                      ? null
+                                                      : () async {
+                                                          final payments = await PaymentDialog.show(
+                                                            context: context,
+                                                            bill: bill,
+                                                          );
                                                       if (payments != null && payments.isNotEmpty) {
                                                         final success = await notifier.settleBill(
                                                           bill.id,
@@ -1038,6 +1073,7 @@ class DineInBillingView extends ConsumerWidget {
                                                             context,
                                                             bill: bill,
                                                             payment: paymentObj,
+                                                            tableName: 'Table $settledTableNumber',
                                                             onFinish: () {
                                                               final currentSession = ref.read(cashierProvider).selectedTableSession;
                                                               final customers = currentSession?.customers ?? [];
@@ -1117,9 +1153,11 @@ class DineInBillingView extends ConsumerWidget {
                                             ),
                                           ),
                                         ],
-                                      ],
-                                    ),
-                                  ] else if (selectedCustomer?.isActive == true && activeOrders.isNotEmpty) ...[
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ] else if (selectedCustomer?.isActive == true && activeOrders.isNotEmpty) ...[
                                     Container(
                                       width: double.infinity,
                                       padding: const EdgeInsets.all(12),
